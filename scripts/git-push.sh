@@ -3,7 +3,7 @@
 # Required parameters:
 # @raycast.schemaVersion 1
 # @raycast.title git push
-# @raycast.mode fullOutput
+# @raycast.mode silent
 # @raycast.argument1 { "type": "text", "placeholder": "directory path" }
 
 # Optional parameters:
@@ -19,7 +19,6 @@ HISTORY_FILE="$SCRIPT_DIR/.claude-git-push-history"
 DIR_PATH="$1"
 
 if [ -z "$DIR_PATH" ]; then
-  echo "Error: Directory path is required."
   exit 1
 fi
 
@@ -35,7 +34,6 @@ fi
 
 # Verify directory exists
 if [ ! -d "$RESOLVED_PATH" ]; then
-  echo "Error: Directory not found: $RESOLVED_PATH"
   exit 1
 fi
 
@@ -46,20 +44,17 @@ echo "$DIR_PATH" >> "${HISTORY_FILE}.tmp"
 tail -20 "${HISTORY_FILE}.tmp" > "$HISTORY_FILE"
 rm -f "${HISTORY_FILE}.tmp"
 
-# Change to directory and run claude with git-push-changes skill
-cd "$RESOLVED_PATH" || exit 1
+# Run fully detached from Raycast
+nohup bash -c "
+  cd \"$RESOLVED_PATH\" || exit 1
+  CURRENT_BRANCH=\$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+  REPO_NAME=\$(basename \"$RESOLVED_PATH\")
 
-CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+  /Users/jason/.local/bin/claude -p \"/git-push-changes\" --dangerously-skip-permissions --verbose > /dev/null 2>&1
 
-echo "Working in: $(pwd)"
-echo "Branch: $CURRENT_BRANCH"
-echo "Running claude /git-push-changes ..."
-echo "---"
-
-/Users/jason/.local/bin/claude -p "/git-push-changes" --dangerously-skip-permissions --verbose
-
-if [ $? -eq 0 ]; then
-  osascript -e "display notification \"git push 完成 ✅\" with title \"$CURRENT_BRANCH\" subtitle \"$(basename "$RESOLVED_PATH")\""
-else
-  osascript -e "display notification \"git push 失败 ❌\" with title \"$CURRENT_BRANCH\" subtitle \"$(basename "$RESOLVED_PATH")\""
-fi
+  if [ \$? -eq 0 ]; then
+    terminal-notifier -title \"\$CURRENT_BRANCH\" -subtitle \"\$REPO_NAME\" -message \"git push 完成 ✅\" -sound Glass
+  else
+    terminal-notifier -title \"\$CURRENT_BRANCH\" -subtitle \"\$REPO_NAME\" -message \"git push 失败 ❌\" -sound Basso
+  fi
+" > /dev/null 2>&1 &
