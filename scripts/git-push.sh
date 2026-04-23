@@ -7,7 +7,7 @@
 # @raycast.argument1 { "type": "text", "placeholder": "directory path" }
 
 # Optional parameters:
-# @raycast.icon 🤖
+# @raycast.icon images/git.png
 
 # Documentation:
 # @raycast.description 使用claude对指定目录执行/git-push-changes skill
@@ -50,7 +50,7 @@ nohup bash -c "
   CURRENT_BRANCH=\$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
   REPO_NAME=\$(basename \"$RESOLVED_PATH\")
 
-  /Users/jason/.local/bin/claude -p \"/git-push-changes\" --dangerously-skip-permissions --verbose > /dev/null 2>&1
+  \$HOME/.local/bin/claude -p \"/git-push-changes\" --dangerously-skip-permissions --verbose > /dev/null 2>&1
 
   if [ \$? -eq 0 ]; then
     terminal-notifier -title \"\$CURRENT_BRANCH\" -subtitle \"\$REPO_NAME\" -message \"git push 完成 ✅\" -sound Glass

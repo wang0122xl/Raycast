@@ -1,0 +1,161 @@
+import {
+  Action,
+  ActionPanel,
+  Icon,
+  List,
+  showToast,
+  Toast,
+  useNavigation,
+} from "@raycast/api";
+import { useState, useEffect, useCallback } from "react";
+import {
+  getBranchHistory,
+  addBranchHistory,
+  removeBranchHistory,
+  getCodeAgent,
+} from "./storage";
+import { launchTask } from "./task-manager";
+import { TaskDetail } from "./task-detail";
+import { RepoPicker } from "./repo-picker";
+
+function BranchPicker({
+  dirPath,
+  onBack,
+}: {
+  dirPath: string;
+  onBack: () => void;
+}) {
+  const { push } = useNavigation();
+  const [searchText, setSearchText] = useState("");
+  const [history, setHistory] = useState<string[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  const refresh = useCallback(async () => {
+    setHistory(await getBranchHistory(dirPath));
+    setIsLoading(false);
+  }, [dirPath]);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  const hasSearch = searchText.length > 0;
+  const filteredHistory = hasSearch
+    ? history.filter((b) => b.toLowerCase().includes(searchText.toLowerCase()))
+    : history;
+  const showNewBranch = hasSearch && !history.includes(searchText);
+
+  async function handleSelect(branch: string) {
+    await addBranchHistory(dirPath, branch);
+    const agent = await getCodeAgent();
+    const toast = await showToast({
+      style: Toast.Style.Animated,
+      title: `Creating PR → ${branch}...`,
+    });
+    try {
+      const task = await launchTask(
+        agent,
+        "create-pr",
+        `/create-pr ${branch}`,
+        dirPath,
+        "create-pr",
+        { targetBranch: branch },
+      );
+      toast.style = Toast.Style.Success;
+      toast.title = "Create PR task started";
+      push(<TaskDetail task={task} />);
+    } catch (error) {
+      toast.style = Toast.Style.Failure;
+      toast.title = "Failed to start create PR";
+      toast.message = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  return (
+    <List
+      isLoading={isLoading}
+      searchText={searchText}
+      onSearchTextChange={setSearchText}
+      searchBarPlaceholder="Target branch (e.g. dev, main)..."
+      navigationTitle="Select Target Branch"
+    >
+      {showNewBranch && (
+        <List.Section title="New">
+          <List.Item
+            icon={Icon.Plus}
+            title={searchText}
+            subtitle="Use as target branch"
+            actions={
+              <ActionPanel>
+                <Action
+                  title="Create PR"
+                  onAction={() => handleSelect(searchText)}
+                />
+                <Action
+                  title="Back"
+                  icon={Icon.ArrowLeft}
+                  shortcut={{ modifiers: ["cmd"], key: "[" }}
+                  onAction={onBack}
+                />
+              </ActionPanel>
+            }
+          />
+        </List.Section>
+      )}
+      {filteredHistory.length > 0 && (
+        <List.Section
+          title={hasSearch ? "Matching Branches" : "Recent Branches"}
+        >
+          {filteredHistory.map((branch) => (
+            <List.Item
+              key={branch}
+              icon={Icon.Clock}
+              title={branch}
+              actions={
+                <ActionPanel>
+                  <Action
+                    title="Create PR"
+                    onAction={() => handleSelect(branch)}
+                  />
+                  <Action
+                    title="Remove"
+                    icon={Icon.Trash}
+                    style={Action.Style.Destructive}
+                    shortcut={{ modifiers: ["cmd"], key: "d" }}
+                    onAction={async () => {
+                      await removeBranchHistory(dirPath, branch);
+                      await refresh();
+                    }}
+                  />
+                  <Action
+                    title="Back"
+                    icon={Icon.ArrowLeft}
+                    shortcut={{ modifiers: ["cmd"], key: "[" }}
+                    onAction={onBack}
+                  />
+                </ActionPanel>
+              }
+            />
+          ))}
+        </List.Section>
+      )}
+    </List>
+  );
+}
+
+export default function CreatePR() {
+  const [selectedDir, setSelectedDir] = useState<string | null>(null);
+
+  if (selectedDir) {
+    return (
+      <BranchPicker dirPath={selectedDir} onBack={() => setSelectedDir(null)} />
+    );
+  }
+
+  return (
+    <RepoPicker
+      primaryActionTitle="Select"
+      onSelect={(fullPath) => setSelectedDir(fullPath)}
+    />
+  );
+}

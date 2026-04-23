@@ -8,7 +8,7 @@
 # @raycast.argument2 { "type": "text", "placeholder": "target branch (e.g. dev, main)" }
 
 # Optional parameters:
-# @raycast.icon 🤖
+# @raycast.icon images/git.png
 # @raycast.packageName create-pr
 # @raycast.needsConfirmation false
 
@@ -53,7 +53,7 @@ nohup bash -c "
   CURRENT_BRANCH=\$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
   REPO_NAME=\$(basename \"$RESOLVED_PATH\")
 
-  OUTPUT=\$(/Users/jason/.local/bin/claude -p \"/create-pr $TARGET_BRANCH\" --dangerously-skip-permissions --verbose 2>&1)
+  OUTPUT=\$(\$HOME/.local/bin/claude -p \"/create-pr $TARGET_BRANCH\" --dangerously-skip-permissions --verbose 2>&1)
   EXIT_CODE=\$?
 
   if [ \$EXIT_CODE -eq 0 ]; then
