@@ -1,28 +1,26 @@
-import { Action, ActionPanel, Icon, List, showToast, Toast } from "@raycast/api";
+import {
+  Action,
+  ActionPanel,
+  Icon,
+  List,
+  showToast,
+  Toast,
+} from "@raycast/api";
 import { useState, useEffect, useCallback } from "react";
-import { getFolders, addFolder, removeFolder, getCodeAgent, setCodeAgent, type CodeAgent } from "./storage";
+import { getFolders, addFolder, removeFolder } from "./storage";
 
 export default function ManageFolders() {
   const [folders, setFolders] = useState<string[]>([]);
-  const [agent, setAgent] = useState<CodeAgent>("claude");
   const [isLoading, setIsLoading] = useState(true);
 
   const refresh = useCallback(async () => {
-    const [f, a] = await Promise.all([getFolders(), getCodeAgent()]);
-    setFolders(f);
-    setAgent(a);
+    setFolders(await getFolders());
     setIsLoading(false);
   }, []);
 
   useEffect(() => {
     refresh();
   }, [refresh]);
-
-  async function handleSelectAgent(selected: CodeAgent) {
-    await setCodeAgent(selected);
-    setAgent(selected);
-    await showToast({ style: Toast.Style.Success, title: `Code Agent: ${selected}` });
-  }
 
   async function handleAddFolder() {
     const { execSync } = await import("child_process");
@@ -34,7 +32,11 @@ export default function ManageFolders() {
       if (selected) {
         await addFolder(selected.replace(/\/$/, ""));
         await refresh();
-        await showToast({ style: Toast.Style.Success, title: "Added", message: selected });
+        await showToast({
+          style: Toast.Style.Success,
+          title: "Added",
+          message: selected,
+        });
       }
     } catch {
       // user cancelled
@@ -43,21 +45,6 @@ export default function ManageFolders() {
 
   return (
     <List isLoading={isLoading}>
-      <List.Section title="Code Agent">
-        {(["claude", "codex", "opencode"] as const).map((a) => (
-          <List.Item
-            key={a}
-            icon={a === agent ? Icon.CheckCircle : Icon.Circle}
-            title={a}
-            subtitle={a === agent ? "Active" : ""}
-            actions={
-              <ActionPanel>
-                <Action title="Select" onAction={() => handleSelectAgent(a)} />
-              </ActionPanel>
-            }
-          />
-        ))}
-      </List.Section>
       <List.Section title="Configured Folders">
         {folders.map((f) => (
           <List.Item
@@ -73,7 +60,10 @@ export default function ManageFolders() {
                   onAction={async () => {
                     await removeFolder(f);
                     await refresh();
-                    await showToast({ style: Toast.Style.Success, title: "Removed" });
+                    await showToast({
+                      style: Toast.Style.Success,
+                      title: "Removed",
+                    });
                   }}
                 />
                 <Action

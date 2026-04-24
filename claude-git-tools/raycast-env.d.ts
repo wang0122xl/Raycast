@@ -19,6 +19,10 @@ declare namespace Preferences {
   export type CreatePr = ExtensionPreferences & {}
   /** Preferences accessible in the `manage-folders` command */
   export type ManageFolders = ExtensionPreferences & {}
+  /** Preferences accessible in the `manage-model` command */
+  export type ManageModel = ExtensionPreferences & {}
+  /** Preferences accessible in the `review-pr` command */
+  export type ReviewPr = ExtensionPreferences & {}
   /** Preferences accessible in the `view-tasks` command */
   export type ViewTasks = ExtensionPreferences & {}
 }
@@ -30,6 +34,10 @@ declare namespace Arguments {
   export type CreatePr = {}
   /** Arguments passed to the `manage-folders` command */
   export type ManageFolders = {}
+  /** Arguments passed to the `manage-model` command */
+  export type ManageModel = {}
+  /** Arguments passed to the `review-pr` command */
+  export type ReviewPr = {}
   /** Arguments passed to the `view-tasks` command */
   export type ViewTasks = {}
 }

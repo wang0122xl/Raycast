@@ -12,7 +12,6 @@ import {
   getBranchHistory,
   addBranchHistory,
   removeBranchHistory,
-  getCodeAgent,
 } from "./storage";
 import { launchTask } from "./task-manager";
 import { TaskDetail } from "./task-detail";
@@ -47,20 +46,14 @@ function BranchPicker({
 
   async function handleSelect(branch: string) {
     await addBranchHistory(dirPath, branch);
-    const agent = await getCodeAgent();
     const toast = await showToast({
       style: Toast.Style.Animated,
       title: `Creating PR → ${branch}...`,
     });
     try {
-      const task = await launchTask(
-        agent,
-        "create-pr",
-        `/create-pr ${branch}`,
-        dirPath,
-        "create-pr",
-        { targetBranch: branch },
-      );
+      const task = await launchTask("create-pr", dirPath, "create-pr", {
+        targetBranch: branch,
+      });
       toast.style = Toast.Style.Success;
       toast.title = "Create PR task started";
       push(<TaskDetail task={task} />);

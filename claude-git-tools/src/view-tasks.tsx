@@ -1,16 +1,19 @@
 import {
   Action,
   ActionPanel,
+  closeMainWindow,
   Icon,
   List,
+  open,
+  PopToRootType,
   showToast,
   Toast,
   useNavigation,
 } from "@raycast/api";
 import { useState, useEffect, useCallback } from "react";
 import { getTasks, removeTask, updateTask, type Task } from "./storage";
-import { getTaskStatus, stopTask } from "./task-manager";
-import { TaskDetail } from "./task-detail";
+import { getTaskStatus, launchTask, readTaskOutput, stopTask } from "./task-manager";
+import { extractGitUrl, extractReviewReport, ReviewReportDetail, TaskDetail } from "./task-detail";
 
 function getTaskIcon(status: Task["status"]) {
   switch (status) {
@@ -19,9 +22,24 @@ function getTaskIcon(status: Task["status"]) {
     case "completed":
       return Icon.CheckCircle;
     case "stopped":
+    case "canceled":
       return Icon.Stop;
     case "failed":
       return Icon.XMarkCircle;
+  }
+}
+
+function getStatusLabel(status: Task["status"]): string {
+  switch (status) {
+    case "running":
+      return "running";
+    case "completed":
+      return "completed";
+    case "failed":
+      return "failed";
+    case "stopped":
+    case "canceled":
+      return "canceled";
   }
 }
 
@@ -54,7 +72,7 @@ export default function ViewTasks() {
       });
       await stopTask(task);
       await refresh();
-      await showToast({ style: Toast.Style.Success, title: "Task stopped" });
+      await showToast({ style: Toast.Style.Success, title: "Task canceled" });
     },
     [refresh],
   );
@@ -112,39 +130,145 @@ export default function ViewTasks() {
       )}
       {finished.length > 0 && (
         <List.Section title="Finished">
-          {finished.map((task) => (
-            <List.Item
-              key={task.id}
-              icon={getTaskIcon(task.status)}
-              title={task.label}
-              subtitle={task.dir}
-              accessories={[
-                { text: task.status },
-                { text: new Date(task.startTime).toLocaleTimeString() },
-              ]}
-              actions={
-                <ActionPanel>
-                  <Action
-                    title="View Details"
-                    onAction={() => push(<TaskDetail task={task} allowClear />)}
-                  />
-                  <Action
-                    title="Remove"
-                    icon={Icon.Trash}
-                    style={Action.Style.Destructive}
-                    shortcut={{ modifiers: ["cmd"], key: "d" }}
-                    onAction={() => void handleRemove(task)}
-                  />
-                </ActionPanel>
+          {finished.map((task) => {
+            const output = task.status === "completed" ? readTaskOutput(task) : "";
+            const gitUrl =
+              task.status === "completed"
+                ? extractGitUrl(task, output)
+                : null;
+            const reviewReport =
+              task.status === "completed" && task.command === "review-pr"
+                ? extractReviewReport(output)
+                : null;
+
+            function handleRerunReview() {
+              if (!task.prUrl) return;
+              void (async () => {
+                const toast = await showToast({
+                  style: Toast.Style.Animated,
+                  title: "Re-running review...",
+                });
+                try {
+                  const newTask = await launchTask("review-pr", task.dir, task.label, {
+                    prUrl: task.prUrl,
+                  });
+                  toast.style = Toast.Style.Success;
+                  toast.title = "PR review task started";
+                  push(
+                    <TaskDetail
+                      task={newTask}
+                      onRerunReview={handleRerunReview}
+                    />,
+                  );
+                } catch (error) {
+                  toast.style = Toast.Style.Failure;
+                  toast.title = "Failed to start PR review";
+                  toast.message = error instanceof Error ? error.message : String(error);
+                }
+              })();
+            }
+
+            function handlePrimaryAction() {
+              if (reviewReport && task.prUrl) {
+                push(
+                  <ReviewReportDetail
+                    markdown={reviewReport}
+                    gitUrl={task.prUrl}
+                    navigationTitle={task.label}
+                    prState="open"
+                    dirPath={task.dir}
+                    onReview={handleRerunReview}
+                  />,
+                );
+              } else {
+                push(<TaskDetail task={task} allowClear />);
               }
-            />
-          ))}
+            }
+
+            return (
+              <List.Item
+                key={task.id}
+                icon={getTaskIcon(task.status)}
+                title={task.label}
+                subtitle={task.dir}
+                accessories={[
+                  ...(reviewReport ? [{ icon: Icon.Document, text: "Report" }] : []),
+                  { text: getStatusLabel(task.status) },
+                  { text: new Date(task.startTime).toLocaleTimeString() },
+                ]}
+                actions={
+                  <ActionPanel>
+                    <Action
+                      title="View Details"
+                      icon={Icon.Eye}
+                      onAction={() =>
+                        push(<TaskDetail task={task} allowClear onRerunReview={
+                          task.command === "review-pr" && task.prUrl
+                            ? handleRerunReview
+                            : undefined
+                        } />)
+                      }
+                    />
+                    {gitUrl && (
+                      <>
+                        <Action.CopyToClipboard
+                          title="Copy Git Link"
+                          content={gitUrl}
+                          shortcut={{ modifiers: ["cmd"], key: "enter" }}
+                        />
+                        <Action
+                          title="Open Git Link"
+                          icon={Icon.Link}
+                          shortcut={{ modifiers: ["cmd"], key: "o" }}
+                          onAction={() => {
+                            void open(gitUrl);
+                            void closeMainWindow({
+                              clearRootSearch: true,
+                              popToRootType: PopToRootType.Immediate,
+                            });
+                          }}
+                        />
+                      </>
+                    )}
+                    {task.prUrl && !gitUrl && (
+                      <>
+                        <Action.CopyToClipboard
+                          title="Copy PR Link"
+                          content={task.prUrl}
+                          shortcut={{ modifiers: ["cmd"], key: "enter" }}
+                        />
+                        <Action
+                          title="Open PR Link"
+                          icon={Icon.Link}
+                          shortcut={{ modifiers: ["cmd"], key: "o" }}
+                          onAction={() => {
+                            void open(task.prUrl!);
+                            void closeMainWindow({
+                              clearRootSearch: true,
+                              popToRootType: PopToRootType.Immediate,
+                            });
+                          }}
+                        />
+                      </>
+                    )}
+                    <Action
+                      title="Remove"
+                      icon={Icon.Trash}
+                      style={Action.Style.Destructive}
+                      shortcut={{ modifiers: ["cmd"], key: "d" }}
+                      onAction={() => void handleRemove(task)}
+                    />
+                  </ActionPanel>
+                }
+              />
+            );
+          })}
         </List.Section>
       )}
       {tasks.length === 0 && !isLoading && (
         <List.EmptyView
           title="No Tasks"
-          description="Run git-push or create-pr to start a task"
+          description="Run git-push, create-pr, or review-pr to start a task"
         />
       )}
     </List>

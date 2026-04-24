@@ -5,17 +5,26 @@ import {
   readFileSync,
   existsSync,
   mkdirSync,
+  readdirSync,
+  statSync,
+  unlinkSync,
 } from "fs";
 import { join } from "path";
 import { tmpdir, homedir } from "os";
-import { addTask, updateTask, type Task, type CodeAgent } from "./storage";
+import { addTask, getModel, updateTask, type Task } from "./storage";
 
-export type TaskCommand = "git-push" | "create-pr";
+export type TaskCommand = "git-push" | "create-pr" | "review-pr";
 
 const TASK_DIR = join(tmpdir(), "claude-git-tools-tasks");
 const FORMATTER_FILE = join(TASK_DIR, "format-agent-output.js");
+const STALE_TASK_MAX_AGE_MS = 10 * 60 * 1000;
 
 let formatterWritten = false;
+
+interface TaskOptions {
+  targetBranch?: string;
+  prUrl?: string;
+}
 
 function ensureTaskDir() {
   if (!existsSync(TASK_DIR)) mkdirSync(TASK_DIR, { recursive: true });
@@ -25,15 +34,133 @@ function ensureTaskDir() {
   }
 }
 
-function buildAgentCmd(agent: CodeAgent, prompt: string): string {
-  const quoted = JSON.stringify(prompt);
-  switch (agent) {
-    case "claude":
-      return `claude -p ${quoted} --dangerously-skip-permissions --verbose --output-format stream-json --include-partial-messages`;
-    case "codex":
-      return `codex exec --full-auto --json ${quoted}`;
-    case "opencode":
-      return `opencode run --format json --print-logs ${quoted}`;
+function shellQuote(value: string): string {
+  return JSON.stringify(value);
+}
+
+function requireTargetBranch(options: TaskOptions): string {
+  const targetBranch = options.targetBranch?.trim();
+  if (!targetBranch) {
+    throw new Error("Target branch is required for create-pr");
+  }
+  return targetBranch;
+}
+
+function buildClaudeCommand(
+  command: TaskCommand,
+  options: TaskOptions,
+  model: string,
+): string {
+  let prompt: string;
+  if (command === "git-push") {
+    prompt = "/git-push-changes";
+  } else if (command === "create-pr") {
+    prompt = `/create-pr ${requireTargetBranch(options)}`;
+  } else {
+    const prUrl = options.prUrl || "";
+    prompt = `/pr-review ${prUrl}`;
+  }
+
+  return [
+    "claude",
+    "-p",
+    "--dangerously-skip-permissions",
+    "--verbose",
+    "--model",
+    shellQuote(model),
+    "--output-format",
+    "stream-json",
+    "--include-partial-messages",
+    "--include-hook-events",
+    "--",
+    shellQuote(prompt),
+  ].join(" ");
+}
+
+function getTaskFileId(name: string): string | null {
+  const match = name.match(/^([a-z0-9]+)\.(log|pid|exit|fifo)$/i);
+  return match ? match[1] : null;
+}
+
+function reapStaleTaskProcesses() {
+  if (!existsSync(TASK_DIR)) return;
+
+  const now = Date.now();
+  const staleIds = new Set<string>();
+
+  for (const name of readdirSync(TASK_DIR)) {
+    const taskId = getTaskFileId(name);
+    if (!taskId) continue;
+
+    const path = join(TASK_DIR, name);
+    let isOld = false;
+    try {
+      isOld = now - statSync(path).mtimeMs > STALE_TASK_MAX_AGE_MS;
+    } catch {
+      continue;
+    }
+    if (!isOld) continue;
+
+    if (name.endsWith(".fifo")) {
+      staleIds.add(taskId);
+      continue;
+    }
+
+    if (!name.endsWith(".pid")) continue;
+
+    try {
+      if (!readFileSync(path, "utf-8").trim()) {
+        staleIds.add(taskId);
+      }
+    } catch {
+      staleIds.add(taskId);
+    }
+  }
+
+  if (!staleIds.size) return;
+
+  let processList = "";
+  try {
+    processList = execFileSync("ps", ["-axo", "pid=,command="], {
+      encoding: "utf-8",
+      timeout: 5000,
+    });
+  } catch {
+    processList = "";
+  }
+
+  for (const line of processList.split("\n")) {
+    const match = line.match(/^\s*(\d+)\s+(.*)$/);
+    if (!match) continue;
+
+    const pid = Number(match[1]);
+    const command = match[2];
+    if (!Number.isInteger(pid) || pid <= 0 || pid === process.pid) continue;
+    if (!command.includes(TASK_DIR)) continue;
+    if (![...staleIds].some((taskId) => command.includes(taskId))) continue;
+
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch {
+      continue;
+    }
+
+    try {
+      process.kill(pid, 0);
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // The process exited after SIGTERM.
+    }
+  }
+
+  for (const taskId of staleIds) {
+    const fifoPath = join(TASK_DIR, `${taskId}.fifo`);
+    if (!existsSync(fifoPath)) continue;
+    try {
+      unlinkSync(fifoPath);
+    } catch {
+      // Best effort cleanup for legacy FIFO-based launches.
+    }
   }
 }
 
@@ -52,102 +179,164 @@ function getCurrentBranch(dir: string): string {
 const outputFormatterScript = String.raw`
 const readline = require("readline");
 
-const seenBlocks = new Set();
-let lastText = "";
+const claudeToolUses = new Set();
+const claudeToolResults = new Set();
 
 function asText(value) {
   if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.map(asText).filter(Boolean).join("");
   if (!value || typeof value !== "object") return "";
   if (typeof value.text === "string") return value.text;
   if (typeof value.content === "string") return value.content;
+  if (Array.isArray(value.content)) return value.content.map(asText).filter(Boolean).join("");
   if (typeof value.output === "string") return value.output;
   if (typeof value.stdout === "string") return value.stdout;
   if (typeof value.stderr === "string") return value.stderr;
+  if (typeof value.message === "string") return value.message;
   if (value.delta) return asText(value.delta);
+  if (value.result) return asText(value.result);
   return "";
 }
 
-function formatToolUse(part) {
-  const name = part.name || part.tool_name || "tool";
-  const input = part.input || part.arguments || {};
-  const command =
-    typeof input === "object" && input
-      ? input.command || input.cmd || input.description || ""
-      : "";
+function toolCommandFromInput(input) {
+  if (typeof input === "string") return input;
+  if (!input || typeof input !== "object") return "";
+  return input.command || input.cmd || input.description || input.query || input.prompt || "";
+}
 
+function formatToolUse(part) {
+  const name = part.name || part.tool_name || part.tool || "tool";
+  const command = toolCommandFromInput(
+    part.input || part.arguments || part.parameters || part.state?.input || part.payload,
+  );
   if (!command) return "";
 
-  return "\n▸ " + name + (command ? ": " + command : "") + "\n";
+  return "\n▸ " + name + ": " + command + "\n";
 }
 
 function formatToolResult(part) {
-  const content = asText(part.content || part.result || part.output || part);
+  const content = asText(part.content || part.result || part.output || part.state?.output || part);
   if (!content.trim()) return "";
   return "\n" + content.trimEnd() + "\n";
 }
 
-function textFromContent(content) {
-  if (typeof content === "string") return content;
+function buildClaudePartKey(part) {
+  return JSON.stringify([
+    part.id || part.tool_use_id || "",
+    part.name || part.tool_name || part.tool || "",
+    toolCommandFromInput(part.input || part.arguments || part.parameters || part.state?.input || part.payload),
+    asText(part.content || part.result || part.output || part.state?.output),
+  ]);
+}
+
+function formatClaudeToolUse(part) {
+  const key = buildClaudePartKey(part);
+  if (claudeToolUses.has(key)) return "";
+  claudeToolUses.add(key);
+  return formatToolUse(part);
+}
+
+function formatClaudeToolResult(part) {
+  const key = buildClaudePartKey(part);
+  if (claudeToolResults.has(key)) return "";
+  claudeToolResults.add(key);
+  return formatToolResult(part);
+}
+
+function formatClaudeContent(content) {
   if (!Array.isArray(content)) return "";
 
   return content
     .map((part) => {
       if (!part || typeof part !== "object") return "";
-      if (part.type === "tool_use") return formatToolUse(part);
-      if (part.type === "tool_result") return formatToolResult(part);
-      return asText(part);
+      if (part.type === "tool_use") return formatClaudeToolUse(part);
+      if (part.type === "tool_result") return formatClaudeToolResult(part);
+      return "";
     })
     .filter(Boolean)
     .join("");
 }
 
-function textFromEvent(event) {
-  const contentBlock = event.event?.content_block || event.content_block;
-  if (contentBlock?.type === "tool_use") return formatToolUse(contentBlock);
-  if (contentBlock?.type === "tool_result") return formatToolResult(contentBlock);
-
-  return (
-    asText(event.delta) ||
-    asText(event.event?.delta) ||
-    asText(event.event?.content_block) ||
-    asText(event.event) ||
-    asText(event) ||
-    textFromContent(event.content) ||
-    textFromContent(event.message?.content) ||
-    textFromContent(event.event?.message?.content)
+function formatClaudeHook(event) {
+  const hookName =
+    event.hook_event_name ||
+    event.subtype ||
+    event.event?.hook_event_name ||
+    event.hook?.name ||
+    "hook";
+  const payload = event.payload || event.data || event.hook || event.event || {};
+  const command = toolCommandFromInput(
+    payload.input || payload.arguments || payload.parameters || event.input || event.arguments || payload,
   );
-}
+  const output = asText(payload.output || payload.stdout || payload.stderr || payload.message || event.message);
 
-function dedupe(text) {
-  if (!text) return "";
-  if (text === lastText) return "";
-  lastText = text;
-
-  const normalized = text.trim();
-  if (normalized.length > 24) {
-    if (seenBlocks.has(normalized)) return "";
-    seenBlocks.add(normalized);
+  if (command) {
+    return "\n▸ " + hookName + ": " + command + "\n" + (output ? output.trimEnd() + "\n" : "");
   }
 
-  return text;
+  if (output.trim()) {
+    return "\n[" + hookName + "] " + output.trimEnd() + "\n";
+  }
+
+  return "";
+}
+
+function formatClaude(event) {
+  if (event.type === "system" || event.type === "result") return "";
+
+  if (event.type === "stream_event") {
+    const streamEvent = event.event;
+    if (!streamEvent || typeof streamEvent !== "object") return "";
+
+    if (
+      streamEvent.type === "content_block_delta" &&
+      streamEvent.delta?.type === "text_delta"
+    ) {
+      return streamEvent.delta.text || "";
+    }
+
+    if (
+      streamEvent.type === "content_block_start" &&
+      streamEvent.content_block?.type === "tool_use"
+    ) {
+      return formatClaudeToolUse(streamEvent.content_block);
+    }
+
+    if (
+      streamEvent.type === "content_block_start" &&
+      streamEvent.content_block?.type === "tool_result"
+    ) {
+      return formatClaudeToolResult(streamEvent.content_block);
+    }
+
+    return "";
+  }
+
+  if (event.type === "assistant") {
+    return formatClaudeContent(event.message?.content || event.event?.message?.content);
+  }
+
+  if (
+    event.type === "hook" ||
+    event.type === "hook_event" ||
+    event.type === "hook-event" ||
+    event.hook_event_name
+  ) {
+    return formatClaudeHook(event);
+  }
+
+  if (event.type === "tool_use") return formatClaudeToolUse(event);
+  if (event.type === "tool_result") return formatClaudeToolResult(event);
+
+  const error = asText(event.error);
+  if (error) return "\n[error] " + error + "\n";
+
+  return "";
 }
 
 function formatLine(line) {
   try {
-    const event = JSON.parse(line);
-
-    if (event.type === "system" || event.type === "result") return "";
-
-    const text = textFromEvent(event);
-    if (text) return dedupe(text);
-
-    if (event.type === "tool_use") return dedupe(formatToolUse(event));
-    if (event.type === "tool_result") return dedupe(formatToolResult(event));
-
-    const error = asText(event.error);
-    if (error) return "\n[error] " + error + "\n";
-
-    return "";
+    return formatClaude(JSON.parse(line));
   } catch {
     return line + "\n";
   }
@@ -220,17 +409,19 @@ export function isTaskRunning(task: Task): boolean {
 }
 
 export function getTaskStatus(task: Task): Task["status"] {
+  if (task.status === "canceled") return "stopped";
   if (task.status !== "running") return task.status;
 
   const exitCode = readTaskExitCode(task);
   if (exitCode === 0) return "completed";
-  if (exitCode !== null)
+  if (exitCode !== null) {
     return exitCode === 130 || exitCode === 143 ? "stopped" : "failed";
+  }
 
   if (isTaskRunning(task)) return "running";
 
   const output = readTaskOutput(task).toLowerCase();
-  if (output.includes("task stopped by user")) return "stopped";
+  if (output.includes("task canceled by user")) return "stopped";
   return output.includes("failed") || output.includes("error")
     ? "failed"
     : "completed";
@@ -267,7 +458,7 @@ export async function stopTask(task: Task): Promise<void> {
   }
 
   try {
-    appendFileSync(task.outputFile, "\n\n[Task stopped by user]\n");
+    appendFileSync(task.outputFile, "\n\n[Task canceled by user]\n");
   } catch {
     // Ignore log write failures; the stored status is authoritative.
   }
@@ -290,14 +481,13 @@ export async function stopTask(task: Task): Promise<void> {
 }
 
 export async function launchTask(
-  agent: CodeAgent,
   command: TaskCommand,
-  prompt: string,
   dir: string,
   label: string,
-  options: { targetBranch?: string } = {},
+  options: TaskOptions = {},
 ): Promise<Task> {
   ensureTaskDir();
+  reapStaleTaskProcesses();
   const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   const outputFile = join(TASK_DIR, `${id}.log`);
   const pidFile = join(TASK_DIR, `${id}.pid`);
@@ -315,6 +505,7 @@ export async function launchTask(
     label,
     branch,
     targetBranch: options.targetBranch,
+    prUrl: options.prUrl,
     status: "running",
     outputFile,
     pidFile,
@@ -323,7 +514,8 @@ export async function launchTask(
   };
   await addTask(task);
 
-  const agentCmd = buildAgentCmd(agent, prompt);
+  const model = await getModel();
+  const claudeCommand = buildClaudeCommand(command, options, model);
   const home = homedir();
 
   const script = `
@@ -332,22 +524,95 @@ REPO_NAME=$(basename "$PWD")
 TASK_LABEL=${JSON.stringify(label)}
 TASK_COMMAND=${JSON.stringify(command)}
 OUTPUT_FILE=${JSON.stringify(outputFile)}
+PID_FILE=${JSON.stringify(pidFile)}
 
-trap 'printf "\\n[Task stopped by user]\\n" >> ${JSON.stringify(outputFile)}; printf "130\\n" > ${JSON.stringify(exitCodeFile)}; exit 130' TERM INT
+trap 'printf "\\n[Task canceled by user]\\n" >> ${JSON.stringify(outputFile)}; printf "130\\n" > ${JSON.stringify(exitCodeFile)}; exit 130' TERM INT
 
-${agentCmd} 2>&1 | node ${JSON.stringify(FORMATTER_FILE)} | tee -a ${JSON.stringify(outputFile)}
+cleanup_residual_processes() {
+  local roots descendants
+  roots="$$"
+  descendants=""
+
+  while [ -n "$roots" ]; do
+    local children
+    children=$(ps -axo pid=,ppid= 2>/dev/null | awk -v roots=" $roots " '
+      index(roots, " " $2 " ") { print $1 }
+    ')
+    if [ -z "$children" ]; then
+      break
+    fi
+
+    descendants="$descendants $children"
+    roots=$(echo "$children" | tr '\n' ' ' | xargs)
+  done
+
+  descendants=$(echo "$descendants" | xargs)
+  if [ -z "$descendants" ]; then
+    return 0
+  fi
+
+  kill -TERM $descendants 2>/dev/null || true
+  sleep 0.3
+
+  roots="$$"
+  descendants=""
+  while [ -n "$roots" ]; do
+    local children
+    children=$(ps -axo pid=,ppid= 2>/dev/null | awk -v roots=" $roots " '
+      index(roots, " " $2 " ") { print $1 }
+    ')
+    if [ -z "$children" ]; then
+      break
+    fi
+
+    descendants="$descendants $children"
+    roots=$(echo "$children" | tr '\n' ' ' | xargs)
+  done
+
+  descendants=$(echo "$descendants" | xargs)
+  if [ -n "$descendants" ]; then
+    kill -KILL $descendants 2>/dev/null || true
+  fi
+}
+
+${claudeCommand} 2>&1 | node ${JSON.stringify(FORMATTER_FILE)} | tee -a ${JSON.stringify(outputFile)}
 EXIT_CODE=\${PIPESTATUS[0]}
 printf "%s\\n" "$EXIT_CODE" > ${JSON.stringify(exitCodeFile)}
-printf "" > ${JSON.stringify(pidFile)}
+cleanup_residual_processes
 
 if [ $EXIT_CODE -eq 0 ]; then
   OPEN_URL=""
   if [ "$TASK_COMMAND" = "create-pr" ]; then
     OPEN_URL=$(grep -oE 'https://github\\.com/[^/]+/[^/]+/pull/[0-9]+' "$OUTPUT_FILE" | head -1)
-  elif [ "$TASK_COMMAND" = "git-push" ]; then
-    OPEN_URL=$(grep -oE 'https://(github\\.com|gitlab\\.com|bitbucket\\.org)/[^[:space:]<>")}]+' "$OUTPUT_FILE" | tail -1 | sed 's/[.,;:)]*$//')
     if [ -z "$OPEN_URL" ]; then
-      OPEN_URL=$(grep -oE 'https://[^[:space:]<>")}]+' "$OUTPUT_FILE" | tail -1 | sed 's/[.,;:)]*$//')
+      OPEN_URL=$(grep -oE 'https://gitlab\\.com/[^[:space:]<>")}]*/-/(merge_requests)/[0-9]+' "$OUTPUT_FILE" | head -1)
+    fi
+    if [ -z "$OPEN_URL" ]; then
+      OPEN_URL=$(grep -oE 'https://bitbucket\\.org/[^[:space:]<>")}]*/pull-requests/[0-9]+' "$OUTPUT_FILE" | head -1)
+    fi
+  elif [ "$TASK_COMMAND" = "review-pr" ]; then
+    OPEN_URL=$(grep -oE 'https://github\\.com/[^/]+/[^/]+/pull/[0-9]+' "$OUTPUT_FILE" | head -1)
+    if [ -z "$OPEN_URL" ]; then
+      OPEN_URL=$(grep -oE 'https://gitlab\\.com/[^[:space:]<>")}]*/-/(merge_requests)/[0-9]+' "$OUTPUT_FILE" | head -1)
+    fi
+    if [ -z "$OPEN_URL" ]; then
+      OPEN_URL=$(grep -oE 'https://bitbucket\\.org/[^[:space:]<>")}]*/pull-requests/[0-9]+' "$OUTPUT_FILE" | head -1)
+    fi
+  elif [ "$TASK_COMMAND" = "git-push" ]; then
+    OPEN_URL=$(grep -oE 'https://(github\\.com|gitlab\\.com)/[^[:space:]<>")}]+/commit/[0-9a-f]+' "$OUTPUT_FILE" | head -1)
+    if [ -z "$OPEN_URL" ]; then
+      OPEN_URL=$(grep -oE 'https://bitbucket\\.org/[^[:space:]<>")}]+/commits/[0-9a-f]+' "$OUTPUT_FILE" | head -1)
+    fi
+    if [ -z "$OPEN_URL" ]; then
+      OPEN_URL=$(grep -oE 'https://(github\\.com|gitlab\\.com|bitbucket\\.org)/[^[:space:]<>")}]+' "$OUTPUT_FILE" | head -1 | sed "s/[.,;:)']*$//")
+    fi
+    if [ -z "$OPEN_URL" ]; then
+      SSH_MATCH=$(grep -oE '(git@)?(github\\.com|gitlab\\.com|bitbucket\\.org):[^[:space:]]+' "$OUTPUT_FILE" | tail -1)
+      if [ -n "$SSH_MATCH" ]; then
+        SSH_HOST=$(echo "$SSH_MATCH" | sed 's/^git@//' | cut -d: -f1)
+        SSH_PATH=$(echo "$SSH_MATCH" | cut -d: -f2 | sed 's/\\.git$//')
+        OPEN_URL="https://$SSH_HOST/$SSH_PATH"
+      fi
     fi
   fi
 
@@ -359,6 +624,9 @@ if [ $EXIT_CODE -eq 0 ]; then
 else
   terminal-notifier -title "$CURRENT_BRANCH" -subtitle "$REPO_NAME" -message "$TASK_LABEL failed" -sound Basso 2>/dev/null || true
 fi
+
+printf "" > "$PID_FILE"
+
 exit $EXIT_CODE
 `.trim();
 

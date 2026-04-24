@@ -5,7 +5,9 @@
   "description": "Git push and create PR powered by Claude",
   "icon": "command-icon.png",
   "author": "wang0122xl",
-  "categories": ["Developer Tools"],
+  "categories": [
+    "Developer Tools"
+  ],
   "license": "MIT",
   "commands": [
     {
@@ -24,6 +26,18 @@
       "name": "manage-folders",
       "title": "Manage Folders",
       "description": "Add or remove folders to scan for git repositories",
+      "mode": "view"
+    },
+    {
+      "name": "manage-model",
+      "title": "Manage Model",
+      "description": "Select the Claude model to use (haiku, sonnet, opus)",
+      "mode": "view"
+    },
+    {
+      "name": "review-pr",
+      "title": "Review PR",
+      "description": "Review a pull request using Claude",
       "mode": "view"
     },
     {

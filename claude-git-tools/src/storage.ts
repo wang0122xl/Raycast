@@ -4,9 +4,10 @@ const CONFIGURED_FOLDERS_KEY = "configured-folders";
 const DIR_HISTORY_KEY = "dir-history";
 const BRANCH_HISTORY_PREFIX = "branch-history:";
 const TASKS_KEY = "tasks";
-const CODE_AGENT_KEY = "code-agent";
+const MODEL_KEY = "selected-model";
 
-export type CodeAgent = "claude" | "codex" | "opencode";
+export type ClaudeModel = "haiku" | "sonnet" | "opus";
+export const DEFAULT_MODEL: ClaudeModel = "sonnet";
 
 export interface Task {
   id: string;
@@ -15,7 +16,8 @@ export interface Task {
   label: string;
   branch?: string;
   targetBranch?: string;
-  status: "running" | "completed" | "failed" | "stopped";
+  prUrl?: string;
+  status: "running" | "completed" | "failed" | "stopped" | "canceled";
   outputFile: string;
   pidFile: string;
   exitCodeFile?: string;
@@ -34,15 +36,6 @@ async function getJsonArray<T = string>(key: string): Promise<T[]> {
 
 async function setJsonArray<T>(key: string, arr: T[]) {
   await LocalStorage.setItem(key, JSON.stringify(arr));
-}
-
-export async function getCodeAgent(): Promise<CodeAgent> {
-  const val = await LocalStorage.getItem<string>(CODE_AGENT_KEY);
-  return (val as CodeAgent) || "claude";
-}
-
-export async function setCodeAgent(agent: CodeAgent) {
-  await LocalStorage.setItem(CODE_AGENT_KEY, agent);
 }
 
 export async function getFolders(): Promise<string[]> {
@@ -123,4 +116,14 @@ export async function removeTask(id: string) {
     TASKS_KEY,
     tasks.filter((t) => t.id !== id),
   );
+}
+
+export async function getModel(): Promise<ClaudeModel> {
+  const raw = await LocalStorage.getItem<string>(MODEL_KEY);
+  if (raw === "haiku" || raw === "sonnet" || raw === "opus") return raw;
+  return DEFAULT_MODEL;
+}
+
+export async function setModel(model: ClaudeModel) {
+  await LocalStorage.setItem(MODEL_KEY, model);
 }
