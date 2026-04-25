@@ -44,6 +44,10 @@ function BranchPicker({
     : history;
   const showNewBranch = hasSearch && !history.includes(searchText);
 
+  function formatBranchDisplay(branch: string): string {
+    return branch.includes(" ") ? branch.split(/\s+/).join(" -> ") : branch;
+  }
+
   async function handleSelect(branch: string) {
     await addBranchHistory(dirPath, branch);
     const toast = await showToast({
@@ -76,7 +80,7 @@ function BranchPicker({
         <List.Section title="New">
           <List.Item
             icon={Icon.Plus}
-            title={searchText}
+            title={formatBranchDisplay(searchText)}
             subtitle="Use as target branch"
             actions={
               <ActionPanel>
@@ -103,7 +107,7 @@ function BranchPicker({
             <List.Item
               key={branch}
               icon={Icon.Clock}
-              title={branch}
+              title={formatBranchDisplay(branch)}
               actions={
                 <ActionPanel>
                   <Action

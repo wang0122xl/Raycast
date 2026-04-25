@@ -24,7 +24,11 @@ function scanForGitRepos(baseDir: string, maxDepth: number): GitRepo[] {
       if (depth === maxDepth) return;
       for (const entry of readdirSync(dir, { withFileTypes: true })) {
         if (entry.isDirectory() && !entry.name.startsWith(".")) {
-          walk(join(dir, entry.name), depth + 1, relPath ? `${relPath}/${entry.name}` : `${baseName}/${entry.name}`);
+          walk(
+            join(dir, entry.name),
+            depth + 1,
+            relPath ? `${relPath}/${entry.name}` : `${baseName}/${entry.name}`,
+          );
         }
       }
     } catch {

@@ -1,9 +1,4 @@
-import {
-  Action,
-  ActionPanel,
-  Icon,
-  List,
-} from "@raycast/api";
+import { Action, ActionPanel, Icon, List } from "@raycast/api";
 import { useState, useEffect, useCallback } from "react";
 import { getDirHistory, addDirHistory, removeDirHistory } from "./storage";
 import { getAllGitRepos } from "./git-utils";

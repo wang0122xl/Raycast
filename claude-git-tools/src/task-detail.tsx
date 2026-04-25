@@ -12,7 +12,30 @@ import {
 } from "@raycast/api";
 import { useCallback, useEffect, useState } from "react";
 import { removeTask, updateTask, type Task } from "./storage";
-import { getTaskStatus, readTaskOutput, stopTask } from "./task-manager";
+import { getTaskStatus, launchTask, readTaskOutput, stopTask } from "./task-manager";
+import { execFile } from "child_process";
+import { homedir } from "os";
+
+const EXTENDED_PATH = `${homedir()}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:${process.env.PATH || ""}`;
+
+async function checkPrOpen(prUrl: string, dir: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    execFile(
+      "gh",
+      ["pr", "view", prUrl, "--json", "state"],
+      { cwd: dir, encoding: "utf-8", timeout: 10000, env: { ...process.env, PATH: EXTENDED_PATH } },
+      (err, stdout) => {
+        if (err) { resolve(false); return; }
+        try {
+          const data = JSON.parse(stdout);
+          resolve(data.state?.toLowerCase() === "open");
+        } catch {
+          resolve(false);
+        }
+      },
+    );
+  });
+}
 
 const REFRESH_INTERVAL_MS = 1000;
 const LATEST_OUTPUT_LINE_LIMIT = 6;
@@ -178,6 +201,7 @@ export function TaskDetail({
   const [output, setOutput] = useState("");
   const [status, setStatus] = useState<Task["status"]>(task.status);
   const [hasAutoNavigated, setHasAutoNavigated] = useState(false);
+  const [prOpen, setPrOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     const taskWithCurrentStatus = { ...task, status };
@@ -222,6 +246,18 @@ export function TaskDetail({
     return () => clearInterval(timer);
   }, [refresh]);
 
+  const running = status === "running";
+  const finished = status === "completed";
+  const gitUrl = finished ? extractGitUrl(task, output) : null;
+
+  useEffect(() => {
+    if (task.command !== "create-pr" || !gitUrl) {
+      setPrOpen(false);
+      return;
+    }
+    void checkPrOpen(gitUrl, task.dir).then(setPrOpen);
+  }, [task.command, task.dir, gitUrl]);
+
   async function handleStop() {
     await showToast({ style: Toast.Style.Animated, title: "Stopping task..." });
     await stopTask({ ...task, status });
@@ -242,9 +278,6 @@ export function TaskDetail({
     });
   }
 
-  const running = status === "running";
-  const finished = status === "completed";
-  const gitUrl = finished ? extractGitUrl(task, output) : null;
   const reviewReport =
     finished && task.command === "review-pr" && task.prUrl
       ? extractReviewReport(output)
@@ -257,16 +290,10 @@ export function TaskDetail({
       navigationTitle={task.label}
       actions={
         <ActionPanel>
-          <Action
-            title="Close Raycast"
-            icon={Icon.Window}
-            onAction={() => void handleCloseMainWindow()}
-          />
           {reviewReport && task.prUrl && (
             <Action
               title="View Review Report"
               icon={Icon.Document}
-              shortcut={{ modifiers: ["cmd", "shift"], key: "o" }}
               onAction={() =>
                 push(
                   <ReviewReportDetail
@@ -281,12 +308,18 @@ export function TaskDetail({
               }
             />
           )}
+          {!(reviewReport && task.prUrl) && (
+            <Action
+              title="Close Raycast"
+              icon={Icon.Window}
+              onAction={() => void handleCloseMainWindow()}
+            />
+          )}
           {gitUrl && (
             <>
               <Action.CopyToClipboard
                 title="Copy Git Link"
                 content={gitUrl}
-                shortcut={{ modifiers: ["cmd"], key: "enter" }}
               />
               <Action
                 title="Open Git Link"
@@ -298,6 +331,41 @@ export function TaskDetail({
                 }}
               />
             </>
+          )}
+          {reviewReport && task.prUrl && (
+            <Action
+              title="Close Raycast"
+              icon={Icon.Window}
+              onAction={() => void handleCloseMainWindow()}
+            />
+          )}
+          {task.command === "create-pr" && prOpen && gitUrl && (
+            <Action
+              title="Review PR"
+              icon={Icon.MagnifyingGlass}
+              shortcut={{ modifiers: ["cmd", "shift"], key: "r" }}
+              onAction={async () => {
+                const toast = await showToast({ style: Toast.Style.Animated, title: "Starting PR review..." });
+                try {
+                  const reviewTask = await launchTask("review-pr", task.dir, "review-pr", { prUrl: gitUrl });
+                  toast.style = Toast.Style.Success;
+                  toast.title = "PR review task started";
+                  push(
+                    <TaskDetail
+                      task={reviewTask}
+                      onRerunReview={async () => {
+                        const t = await launchTask("review-pr", task.dir, "review-pr", { prUrl: gitUrl });
+                        push(<TaskDetail task={t} />);
+                      }}
+                    />,
+                  );
+                } catch (error) {
+                  toast.style = Toast.Style.Failure;
+                  toast.title = "Failed to start PR review";
+                  toast.message = error instanceof Error ? error.message : String(error);
+                }
+              }}
+            />
           )}
           <Action.CopyToClipboard
             title="Copy Output"
@@ -372,6 +440,15 @@ export function ReviewReportDetail({
       actions={
         <ActionPanel>
           <Action
+            title="Close Raycast"
+            icon={Icon.Window}
+            onAction={() => void handleCloseMainWindow()}
+          />
+          <Action.CopyToClipboard
+            title="Copy PR Link"
+            content={gitUrl}
+          />
+          <Action
             title="Open in Browser"
             icon={Icon.Globe}
             shortcut={{ modifiers: ["cmd"], key: "o" }}
@@ -379,11 +456,6 @@ export function ReviewReportDetail({
               void open(gitUrl);
               void handleCloseMainWindow();
             }}
-          />
-          <Action.CopyToClipboard
-            title="Copy PR Link"
-            content={gitUrl}
-            shortcut={{ modifiers: ["cmd"], key: "enter" }}
           />
           {canReview && (
             <Action
@@ -393,11 +465,6 @@ export function ReviewReportDetail({
               onAction={onReview}
             />
           )}
-          <Action
-            title="Close Raycast"
-            icon={Icon.Window}
-            onAction={() => void handleCloseMainWindow()}
-          />
           <Action
             title="Back"
             icon={Icon.ArrowLeft}

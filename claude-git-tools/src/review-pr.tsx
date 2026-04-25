@@ -1,8 +1,10 @@
 import {
   Action,
   ActionPanel,
+  Alert,
   closeMainWindow,
   Color,
+  confirmAlert,
   Icon,
   List,
   open,
@@ -53,20 +55,25 @@ function execGhAsync(args: string[], dir: string): Promise<string> {
 }
 
 async function fetchPRs(dir: string): Promise<PullRequest[]> {
-  try {
-    const ghArgs = (state: string) => [
-      "pr", "list", "--state", state,
-      "--json", "number,title,url,state,author,updatedAt,headRefName",
-      "--limit", "50",
-    ];
-    const [openJson, closedJson] = await Promise.all([
-      execGhAsync(ghArgs("open"), dir),
-      execGhAsync(ghArgs("closed"), dir),
-    ]);
-    return [...parsePRs(openJson, "open"), ...parsePRs(closedJson, "closed")];
-  } catch {
-    return [];
+  const ghArgs = (state: string) => [
+    "pr", "list", "--state", state,
+    "--json", "number,title,url,state,author,updatedAt,headRefName",
+    "--limit", "50",
+  ];
+  const [openResult, closedResult] = await Promise.allSettled([
+    execGhAsync(ghArgs("open"), dir),
+    execGhAsync(ghArgs("closed"), dir),
+  ]);
+
+  const errors: string[] = [];
+  const openJson = openResult.status === "fulfilled" ? openResult.value : (errors.push(String(openResult.reason)), "[]");
+  const closedJson = closedResult.status === "fulfilled" ? closedResult.value : (errors.push(String(closedResult.reason)), "[]");
+
+  if (errors.length > 0) {
+    void showToast({ style: Toast.Style.Failure, title: "Failed to fetch PRs", message: errors.join("; ") });
   }
+
+  return [...parsePRs(openJson, "open"), ...parsePRs(closedJson, "closed")];
 }
 
 function parsePRs(json: string, fallbackState: string): PullRequest[] {
@@ -145,8 +152,6 @@ function PRPicker({ dirPath, onBack }: { dirPath: string; onBack: () => void }) 
 
   useEffect(() => {
     refresh();
-    const timer = setInterval(refresh, 5000);
-    return () => clearInterval(timer);
   }, [refresh]);
 
   const query = searchText.toLowerCase();
@@ -202,6 +207,48 @@ function PRPicker({ dirPath, onBack }: { dirPath: string; onBack: () => void }) 
   function handleOpenInBrowser(pr: PullRequest) {
     void open(pr.url);
     void handleCloseMainWindow();
+  }
+
+  async function handleApprovePR(pr: PullRequest) {
+    const confirmed = await confirmAlert({
+      title: `Approve & Merge PR #${pr.number}?`,
+      message: pr.title,
+      primaryAction: { title: "Merge", style: Alert.ActionStyle.Default },
+      dismissAction: { title: "Cancel" },
+    });
+    if (!confirmed) return;
+    const toast = await showToast({ style: Toast.Style.Animated, title: "Merging PR..." });
+    try {
+      await execGhAsync(["pr", "merge", String(pr.number), "--merge"], dirPath);
+      toast.style = Toast.Style.Success;
+      toast.title = `PR #${pr.number} merged`;
+      await refresh();
+    } catch (error) {
+      toast.style = Toast.Style.Failure;
+      toast.title = "Failed to merge PR";
+      toast.message = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  async function handleClosePR(pr: PullRequest) {
+    const confirmed = await confirmAlert({
+      title: `Close PR #${pr.number}?`,
+      message: pr.title,
+      primaryAction: { title: "Close", style: Alert.ActionStyle.Destructive },
+      dismissAction: { title: "Cancel" },
+    });
+    if (!confirmed) return;
+    const toast = await showToast({ style: Toast.Style.Animated, title: "Closing PR..." });
+    try {
+      await execGhAsync(["pr", "close", String(pr.number)], dirPath);
+      toast.style = Toast.Style.Success;
+      toast.title = `PR #${pr.number} closed`;
+      await refresh();
+    } catch (error) {
+      toast.style = Toast.Style.Failure;
+      toast.title = "Failed to close PR";
+      toast.message = error instanceof Error ? error.message : String(error);
+    }
   }
 
   function handleEnter(pr: PullRequest, reviewState?: PRReviewState) {
@@ -268,16 +315,16 @@ function PRPicker({ dirPath, onBack }: { dirPath: string; onBack: () => void }) 
           }
           onAction={() => handleEnter(pr, reviewState)}
         />
+        <Action.CopyToClipboard
+          title="Copy PR Link"
+          content={pr.url}
+          shortcut={{ modifiers: ["cmd"], key: "enter" }}
+        />
         <Action
           title="Open in Browser"
           icon={Icon.Globe}
           shortcut={{ modifiers: ["cmd"], key: "o" }}
           onAction={() => handleOpenInBrowser(pr)}
-        />
-        <Action.CopyToClipboard
-          title="Copy PR Link"
-          content={pr.url}
-          shortcut={{ modifiers: ["cmd"], key: "enter" }}
         />
         {isOpen && !reviewState?.isRunning && (
           <Action
@@ -287,6 +334,29 @@ function PRPicker({ dirPath, onBack }: { dirPath: string; onBack: () => void }) 
             onAction={() => handleReview(pr)}
           />
         )}
+        {isOpen && (
+          <>
+            <Action
+              title="Approve & Merge"
+              icon={Icon.Check}
+              shortcut={{ modifiers: ["cmd"], key: "y" }}
+              onAction={() => handleApprovePR(pr)}
+            />
+            <Action
+              title="Close PR"
+              icon={Icon.XMarkCircle}
+              style={Action.Style.Destructive}
+              shortcut={{ modifiers: ["cmd"], key: "n" }}
+              onAction={() => handleClosePR(pr)}
+            />
+          </>
+        )}
+        <Action
+          title="Refresh"
+          icon={Icon.ArrowClockwise}
+          shortcut={{ modifiers: ["cmd"], key: "r" }}
+          onAction={refresh}
+        />
         <Action
           title="Back"
           icon={Icon.ArrowLeft}
@@ -329,7 +399,23 @@ function PRPicker({ dirPath, onBack }: { dirPath: string; onBack: () => void }) 
       {!isLoading && filtered.length === 0 && (
         <List.EmptyView
           title="No Pull Requests"
-          description="No PRs found in this repository"
+          description="Press ⌘R to refresh"
+          actions={
+            <ActionPanel>
+              <Action
+                title="Refresh"
+                icon={Icon.ArrowClockwise}
+                shortcut={{ modifiers: ["cmd"], key: "r" }}
+                onAction={refresh}
+              />
+              <Action
+                title="Back"
+                icon={Icon.ArrowLeft}
+                shortcut={{ modifiers: ["cmd"], key: "[" }}
+                onAction={onBack}
+              />
+            </ActionPanel>
+          }
         />
       )}
     </List>
