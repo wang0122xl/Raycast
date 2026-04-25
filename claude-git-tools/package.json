@@ -24,8 +24,8 @@
     },
     {
       "name": "manage-folders",
-      "title": "Manage Folders",
-      "description": "Add or remove folders to scan for git repositories",
+      "title": "Manage Folders & Skills",
+      "description": "Manage folders and skill files for git commands",
       "mode": "view"
     },
     {

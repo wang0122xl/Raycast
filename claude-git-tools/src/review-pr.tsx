@@ -15,13 +15,19 @@ import {
 } from "@raycast/api";
 import { useState, useEffect, useCallback } from "react";
 import { launchTask, readTaskOutput } from "./task-manager";
-import { extractReviewReport, ReviewReportDetail, TaskDetail } from "./task-detail";
+import {
+  extractReviewReport,
+  ReviewReportDetail,
+  TaskDetail,
+} from "./task-detail";
 import { RepoPicker } from "./repo-picker";
-import { execFile } from "child_process";
-import { homedir } from "os";
 import { getTasks, type Task } from "./storage";
-
-const EXTENDED_PATH = `${homedir()}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:${process.env.PATH || ""}`;
+import { SkillGate, type SkillConfig } from "./skill-picker";
+import {
+  execGhAsync,
+  MERGE_METHOD_LABELS,
+  type MergeMethod,
+} from "./git-utils";
 
 interface PullRequest {
   number: number;
@@ -40,25 +46,16 @@ interface PRReviewState {
   task?: Task;
 }
 
-function execGhAsync(args: string[], dir: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile("gh", args, {
-      cwd: dir,
-      encoding: "utf-8",
-      timeout: 15000,
-      env: { ...process.env, PATH: EXTENDED_PATH },
-    }, (err, stdout) => {
-      if (err) reject(err);
-      else resolve(stdout);
-    });
-  });
-}
-
 async function fetchPRs(dir: string): Promise<PullRequest[]> {
   const ghArgs = (state: string) => [
-    "pr", "list", "--state", state,
-    "--json", "number,title,url,state,author,updatedAt,headRefName",
-    "--limit", "50",
+    "pr",
+    "list",
+    "--state",
+    state,
+    "--json",
+    "number,title,url,state,author,updatedAt,headRefName",
+    "--limit",
+    "50",
   ];
   const [openResult, closedResult] = await Promise.allSettled([
     execGhAsync(ghArgs("open"), dir),
@@ -66,11 +63,21 @@ async function fetchPRs(dir: string): Promise<PullRequest[]> {
   ]);
 
   const errors: string[] = [];
-  const openJson = openResult.status === "fulfilled" ? openResult.value : (errors.push(String(openResult.reason)), "[]");
-  const closedJson = closedResult.status === "fulfilled" ? closedResult.value : (errors.push(String(closedResult.reason)), "[]");
+  const openJson =
+    openResult.status === "fulfilled"
+      ? openResult.value
+      : (errors.push(String(openResult.reason)), "[]");
+  const closedJson =
+    closedResult.status === "fulfilled"
+      ? closedResult.value
+      : (errors.push(String(closedResult.reason)), "[]");
 
   if (errors.length > 0) {
-    void showToast({ style: Toast.Style.Failure, title: "Failed to fetch PRs", message: errors.join("; ") });
+    void showToast({
+      style: Toast.Style.Failure,
+      title: "Failed to fetch PRs",
+      message: errors.join("; "),
+    });
   }
 
   return [...parsePRs(openJson, "open"), ...parsePRs(closedJson, "closed")];
@@ -103,47 +110,68 @@ function parsePRs(json: string, fallbackState: string): PullRequest[] {
   }
 }
 
-function PRPicker({ dirPath, onBack }: { dirPath: string; onBack: () => void }) {
+function PRPicker({
+  dirPath,
+  skill,
+  onBack,
+}: {
+  dirPath: string;
+  skill: SkillConfig;
+  onBack: () => void;
+}) {
   const { push } = useNavigation();
   const [searchText, setSearchText] = useState("");
   const [prs, setPrs] = useState<PullRequest[]>([]);
-  const [reviewStates, setReviewStates] = useState<Map<string, PRReviewState>>(new Map());
+  const [reviewStates, setReviewStates] = useState<Map<string, PRReviewState>>(
+    new Map(),
+  );
   const [isLoading, setIsLoading] = useState(true);
 
-  const loadReviewStates = useCallback(async (fetched: PullRequest[]) => {
-    const tasks = await getTasks();
-    const states = new Map<string, PRReviewState>();
+  const loadReviewStates = useCallback(
+    async (fetched: PullRequest[]) => {
+      const tasks = await getTasks();
+      const states = new Map<string, PRReviewState>();
 
-    for (const pr of fetched) {
-      const matchingTasks = tasks.filter(
-        (t) => t.command === "review-pr" && t.prUrl === pr.url && t.dir === dirPath,
-      );
+      for (const pr of fetched) {
+        const matchingTasks = tasks.filter(
+          (t) =>
+            t.command === "review-pr" &&
+            t.prUrl === pr.url &&
+            t.dir === dirPath,
+        );
 
-      const runningTask = matchingTasks.find((t) => t.status === "running");
-      const completedTask = matchingTasks
-        .filter((t) => t.status === "completed")
-        .sort((a, b) => b.startTime - a.startTime)[0];
+        const runningTask = matchingTasks.find((t) => t.status === "running");
+        const completedTask = matchingTasks
+          .filter((t) => t.status === "completed")
+          .sort((a, b) => b.startTime - a.startTime)[0];
 
-      if (runningTask) {
-        states.set(pr.url, { hasReport: false, isRunning: true, task: runningTask });
-      } else if (completedTask) {
-        const output = readTaskOutput(completedTask);
-        const report = extractReviewReport(output);
-        if (report) {
+        if (runningTask) {
           states.set(pr.url, {
-            hasReport: true,
-            reportMarkdown: report,
-            isRunning: false,
-            task: completedTask,
+            hasReport: false,
+            isRunning: true,
+            task: runningTask,
           });
+        } else if (completedTask) {
+          const output = readTaskOutput(completedTask);
+          const report = extractReviewReport(output);
+          if (report) {
+            states.set(pr.url, {
+              hasReport: true,
+              reportMarkdown: report,
+              isRunning: false,
+              task: completedTask,
+            });
+          }
         }
       }
-    }
 
-    setReviewStates(states);
-  }, [dirPath]);
+      setReviewStates(states);
+    },
+    [dirPath],
+  );
 
   const refresh = useCallback(async () => {
+    setIsLoading(true);
     const fetched = await fetchPRs(dirPath);
     setPrs(fetched);
     await loadReviewStates(fetched);
@@ -179,17 +207,19 @@ function PRPicker({ dirPath, onBack }: { dirPath: string; onBack: () => void }) 
       title: `Reviewing PR #${pr.number}...`,
     });
     try {
-      const task = await launchTask("review-pr", dirPath, `review-pr #${pr.number}`, {
-        prUrl: pr.url,
-      });
+      const task = await launchTask(
+        "review-pr",
+        dirPath,
+        `review-pr #${pr.number}`,
+        {
+          prUrl: pr.url,
+          skillName: skill.skillName,
+          skillDir: skill.skillDir,
+        },
+      );
       toast.style = Toast.Style.Success;
       toast.title = "PR review task started";
-      push(
-        <TaskDetail
-          task={task}
-          onRerunReview={() => handleReview(pr)}
-        />,
-      );
+      push(<TaskDetail task={task} onRerunReview={() => handleReview(pr)} />);
     } catch (error) {
       toast.style = Toast.Style.Failure;
       toast.title = "Failed to start PR review";
@@ -209,17 +239,26 @@ function PRPicker({ dirPath, onBack }: { dirPath: string; onBack: () => void }) 
     void handleCloseMainWindow();
   }
 
-  async function handleApprovePR(pr: PullRequest) {
+  async function handleMergePR(
+    pr: PullRequest,
+    method: MergeMethod,
+  ) {
     const confirmed = await confirmAlert({
-      title: `Approve & Merge PR #${pr.number}?`,
+      title: `${MERGE_METHOD_LABELS[method]} PR #${pr.number}?`,
       message: pr.title,
-      primaryAction: { title: "Merge", style: Alert.ActionStyle.Default },
+      primaryAction: { title: MERGE_METHOD_LABELS[method], style: Alert.ActionStyle.Default },
       dismissAction: { title: "Cancel" },
     });
     if (!confirmed) return;
-    const toast = await showToast({ style: Toast.Style.Animated, title: "Merging PR..." });
+    const toast = await showToast({
+      style: Toast.Style.Animated,
+      title: "Merging PR...",
+    });
     try {
-      await execGhAsync(["pr", "merge", String(pr.number), "--merge"], dirPath);
+      await execGhAsync(
+        ["pr", "merge", String(pr.number), method],
+        dirPath,
+      );
       toast.style = Toast.Style.Success;
       toast.title = `PR #${pr.number} merged`;
       await refresh();
@@ -238,7 +277,10 @@ function PRPicker({ dirPath, onBack }: { dirPath: string; onBack: () => void }) 
       dismissAction: { title: "Cancel" },
     });
     if (!confirmed) return;
-    const toast = await showToast({ style: Toast.Style.Animated, title: "Closing PR..." });
+    const toast = await showToast({
+      style: Toast.Style.Animated,
+      title: "Closing PR...",
+    });
     try {
       await execGhAsync(["pr", "close", String(pr.number)], dirPath);
       toast.style = Toast.Style.Success;
@@ -282,9 +324,15 @@ function PRPicker({ dirPath, onBack }: { dirPath: string; onBack: () => void }) 
     const accessories: List.Item.Accessory[] = [];
 
     if (reviewState?.hasReport) {
-      accessories.push({ tag: { value: "Reviewed", color: Color.Green }, icon: Icon.Document });
+      accessories.push({
+        tag: { value: "Reviewed", color: Color.Green },
+        icon: Icon.Document,
+      });
     } else if (reviewState?.isRunning) {
-      accessories.push({ tag: { value: "Reviewing...", color: Color.Orange }, icon: Icon.CircleProgress });
+      accessories.push({
+        tag: { value: "Reviewing...", color: Color.Orange },
+        icon: Icon.CircleProgress,
+      });
     }
 
     accessories.push(
@@ -336,12 +384,27 @@ function PRPicker({ dirPath, onBack }: { dirPath: string; onBack: () => void }) 
         )}
         {isOpen && (
           <>
-            <Action
+            <ActionPanel.Submenu
               title="Approve & Merge"
               icon={Icon.Check}
               shortcut={{ modifiers: ["cmd"], key: "y" }}
-              onAction={() => handleApprovePR(pr)}
-            />
+            >
+              <Action
+                title="Merge"
+                icon={Icon.Check}
+                onAction={() => handleMergePR(pr, "--merge")}
+              />
+              <Action
+                title="Rebase and Merge"
+                icon={Icon.ArrowRight}
+                onAction={() => handleMergePR(pr, "--rebase")}
+              />
+              <Action
+                title="Squash and Merge"
+                icon={Icon.Layers}
+                onAction={() => handleMergePR(pr, "--squash")}
+              />
+            </ActionPanel.Submenu>
             <Action
               title="Close PR"
               icon={Icon.XMarkCircle}
@@ -423,11 +486,23 @@ function PRPicker({ dirPath, onBack }: { dirPath: string; onBack: () => void }) 
 }
 
 export default function ReviewPR() {
+  return (
+    <SkillGate command="review-pr">
+      {(skill) => <ReviewPRInner skill={skill} />}
+    </SkillGate>
+  );
+}
+
+function ReviewPRInner({ skill }: { skill: SkillConfig }) {
   const [selectedDir, setSelectedDir] = useState<string | null>(null);
 
   if (selectedDir) {
     return (
-      <PRPicker dirPath={selectedDir} onBack={() => setSelectedDir(null)} />
+      <PRPicker
+        dirPath={selectedDir}
+        skill={skill}
+        onBack={() => setSelectedDir(null)}
+      />
     );
   }
 

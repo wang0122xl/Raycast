@@ -11,7 +11,14 @@ import {
 } from "fs";
 import { join } from "path";
 import { tmpdir, homedir } from "os";
-import { addTask, getModel, updateTask, type Task } from "./storage";
+import {
+  addTask,
+  getModel,
+  getSkillPath,
+  updateTask,
+  type Task,
+} from "./storage";
+import { dirFromPath } from "./git-utils";
 
 export type TaskCommand = "git-push" | "create-pr" | "review-pr";
 
@@ -24,6 +31,23 @@ let formatterWritten = false;
 interface TaskOptions {
   targetBranch?: string;
   prUrl?: string;
+  skillName?: string;
+  skillDir?: string;
+}
+
+export function skillPathToName(path: string): string {
+  const base = path.split("/").pop() || "";
+  return base.replace(/\.md$/i, "");
+}
+
+export async function getSkillOptionsForCommand(
+  command: TaskCommand,
+): Promise<{ skillName?: string; skillDir?: string }> {
+  const path = await getSkillPath(command);
+  if (!path) return {};
+  const name = skillPathToName(path);
+  const dir = dirFromPath(path);
+  return { skillName: name, skillDir: dir };
 }
 
 function ensureTaskDir() {
@@ -51,17 +75,28 @@ function buildClaudeCommand(
   options: TaskOptions,
   model: string,
 ): string {
-  let prompt: string;
-  if (command === "git-push") {
-    prompt = "/git-push-changes";
-  } else if (command === "create-pr") {
-    prompt = `/create-pr ${requireTargetBranch(options)}`;
-  } else {
-    const prUrl = options.prUrl || "";
-    prompt = `/pr-review ${prUrl}`;
+  let skillFile = "";
+  if (options.skillDir && options.skillName) {
+    const candidate = join(options.skillDir, `${options.skillName}.md`);
+    if (existsSync(candidate)) {
+      skillFile = candidate;
+    }
   }
 
-  return [
+  let prompt: string;
+  if (command === "git-push") {
+    prompt = skillFile
+      ? "Execute the task described in the appended system prompt"
+      : "/git-push-changes";
+  } else if (command === "create-pr") {
+    const branch = requireTargetBranch(options);
+    prompt = skillFile ? `$ARGUMENTS=${branch}` : `/create-pr ${branch}`;
+  } else {
+    const prUrl = options.prUrl || "";
+    prompt = skillFile ? `$ARGUMENTS=${prUrl}` : `/pr-review ${prUrl}`;
+  }
+
+  const parts = [
     "claude",
     "-p",
     "--dangerously-skip-permissions",
@@ -72,9 +107,15 @@ function buildClaudeCommand(
     "stream-json",
     "--include-partial-messages",
     "--include-hook-events",
-    "--",
-    shellQuote(prompt),
-  ].join(" ");
+  ];
+
+  if (skillFile) {
+    parts.push("--append-system-prompt-file", shellQuote(skillFile));
+  }
+
+  parts.push("--", shellQuote(prompt));
+
+  return parts.join(" ");
 }
 
 function getTaskFileId(name: string): string | null {
@@ -612,6 +653,30 @@ if [ $EXIT_CODE -eq 0 ]; then
         SSH_HOST=$(echo "$SSH_MATCH" | sed 's/^git@//' | cut -d: -f1)
         SSH_PATH=$(echo "$SSH_MATCH" | cut -d: -f2 | sed 's/\\.git$//')
         OPEN_URL="https://$SSH_HOST/$SSH_PATH"
+      fi
+    fi
+  fi
+
+  # Replace base URL in OPEN_URL with actual git remote base URL
+  if [ -n "$OPEN_URL" ]; then
+    REMOTE_URL=$(git remote get-url origin 2>/dev/null || echo "")
+    if [ -n "$REMOTE_URL" ]; then
+      REMOTE_BASE=""
+      case "$REMOTE_URL" in
+        https://*)
+          REMOTE_BASE=$(echo "$REMOTE_URL" | sed 's/\.git$//' | grep -oE '^https://[^/]+/[^/]+/[^/]+')
+          ;;
+        git@*)
+          REMOTE_HOST=$(echo "$REMOTE_URL" | sed 's/^git@//' | cut -d: -f1)
+          REMOTE_PATH=$(echo "$REMOTE_URL" | cut -d: -f2 | sed 's/\.git$//')
+          REMOTE_BASE="https://$REMOTE_HOST/$REMOTE_PATH"
+          ;;
+      esac
+      if [ -n "$REMOTE_BASE" ]; then
+        URL_BASE=$(echo "$OPEN_URL" | grep -oE '^https://[^/]+/[^/]+/[^/]+')
+        if [ -n "$URL_BASE" ] && [ "$URL_BASE" != "$REMOTE_BASE" ]; then
+          OPEN_URL=$(echo "$OPEN_URL" | sed "s|$URL_BASE|$REMOTE_BASE|")
+        fi
       fi
     fi
   fi

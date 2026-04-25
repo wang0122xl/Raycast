@@ -5,6 +5,7 @@ const DIR_HISTORY_KEY = "dir-history";
 const BRANCH_HISTORY_PREFIX = "branch-history:";
 const TASKS_KEY = "tasks";
 const MODEL_KEY = "selected-model";
+const SKILL_PREFIX = "skill-";
 
 export type ClaudeModel = "haiku" | "sonnet" | "opus";
 export const DEFAULT_MODEL: ClaudeModel = "sonnet";
@@ -126,4 +127,24 @@ export async function getModel(): Promise<ClaudeModel> {
 
 export async function setModel(model: ClaudeModel) {
   await LocalStorage.setItem(MODEL_KEY, model);
+}
+
+export type SkillCommand = "git-push" | "create-pr" | "review-pr";
+
+export async function getSkillPath(
+  command: SkillCommand,
+): Promise<string | null> {
+  const raw = await LocalStorage.getItem<string>(SKILL_PREFIX + command);
+  return raw || null;
+}
+
+export async function setSkillPath(
+  command: SkillCommand,
+  path: string,
+): Promise<void> {
+  await LocalStorage.setItem(SKILL_PREFIX + command, path);
+}
+
+export async function removeSkillPath(command: SkillCommand): Promise<void> {
+  await LocalStorage.removeItem(SKILL_PREFIX + command);
 }

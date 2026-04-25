@@ -16,12 +16,15 @@ import {
 import { launchTask } from "./task-manager";
 import { TaskDetail } from "./task-detail";
 import { RepoPicker } from "./repo-picker";
+import { SkillGate, type SkillConfig } from "./skill-picker";
 
 function BranchPicker({
   dirPath,
+  skill,
   onBack,
 }: {
   dirPath: string;
+  skill: SkillConfig;
   onBack: () => void;
 }) {
   const { push } = useNavigation();
@@ -57,6 +60,8 @@ function BranchPicker({
     try {
       const task = await launchTask("create-pr", dirPath, "create-pr", {
         targetBranch: branch,
+        skillName: skill.skillName,
+        skillDir: skill.skillDir,
       });
       toast.style = Toast.Style.Success;
       toast.title = "Create PR task started";
@@ -141,11 +146,23 @@ function BranchPicker({
 }
 
 export default function CreatePR() {
+  return (
+    <SkillGate command="create-pr">
+      {(skill) => <CreatePRInner skill={skill} />}
+    </SkillGate>
+  );
+}
+
+function CreatePRInner({ skill }: { skill: SkillConfig }) {
   const [selectedDir, setSelectedDir] = useState<string | null>(null);
 
   if (selectedDir) {
     return (
-      <BranchPicker dirPath={selectedDir} onBack={() => setSelectedDir(null)} />
+      <BranchPicker
+        dirPath={selectedDir}
+        skill={skill}
+        onBack={() => setSelectedDir(null)}
+      />
     );
   }
 

@@ -12,8 +12,19 @@ import {
 } from "@raycast/api";
 import { useState, useEffect, useCallback } from "react";
 import { getTasks, removeTask, updateTask, type Task } from "./storage";
-import { getTaskStatus, launchTask, readTaskOutput, stopTask } from "./task-manager";
-import { extractGitUrl, extractReviewReport, ReviewReportDetail, TaskDetail } from "./task-detail";
+import {
+  getTaskStatus,
+  getSkillOptionsForCommand,
+  launchTask,
+  readTaskOutput,
+  stopTask,
+} from "./task-manager";
+import {
+  extractGitUrl,
+  extractReviewReport,
+  ReviewReportDetail,
+  TaskDetail,
+} from "./task-detail";
 
 function getTaskIcon(status: Task["status"]) {
   switch (status) {
@@ -131,11 +142,10 @@ export default function ViewTasks() {
       {finished.length > 0 && (
         <List.Section title="Finished">
           {finished.map((task) => {
-            const output = task.status === "completed" ? readTaskOutput(task) : "";
+            const output =
+              task.status === "completed" ? readTaskOutput(task) : "";
             const gitUrl =
-              task.status === "completed"
-                ? extractGitUrl(task, output)
-                : null;
+              task.status === "completed" ? extractGitUrl(task, output) : null;
             const reviewReport =
               task.status === "completed" && task.command === "review-pr"
                 ? extractReviewReport(output)
@@ -149,9 +159,17 @@ export default function ViewTasks() {
                   title: "Re-running review...",
                 });
                 try {
-                  const newTask = await launchTask("review-pr", task.dir, task.label, {
-                    prUrl: task.prUrl,
-                  });
+                  const skillOpts =
+                    await getSkillOptionsForCommand("review-pr");
+                  const newTask = await launchTask(
+                    "review-pr",
+                    task.dir,
+                    task.label,
+                    {
+                      prUrl: task.prUrl,
+                      ...skillOpts,
+                    },
+                  );
                   toast.style = Toast.Style.Success;
                   toast.title = "PR review task started";
                   push(
@@ -163,7 +181,8 @@ export default function ViewTasks() {
                 } catch (error) {
                   toast.style = Toast.Style.Failure;
                   toast.title = "Failed to start PR review";
-                  toast.message = error instanceof Error ? error.message : String(error);
+                  toast.message =
+                    error instanceof Error ? error.message : String(error);
                 }
               })();
             }
@@ -192,7 +211,9 @@ export default function ViewTasks() {
                 title={task.label}
                 subtitle={task.dir}
                 accessories={[
-                  ...(reviewReport ? [{ icon: Icon.Document, text: "Report" }] : []),
+                  ...(reviewReport
+                    ? [{ icon: Icon.Document, text: "Report" }]
+                    : []),
                   { text: getStatusLabel(task.status) },
                   { text: new Date(task.startTime).toLocaleTimeString() },
                 ]}
@@ -202,11 +223,17 @@ export default function ViewTasks() {
                       title="View Details"
                       icon={Icon.Eye}
                       onAction={() =>
-                        push(<TaskDetail task={task} allowClear onRerunReview={
-                          task.command === "review-pr" && task.prUrl
-                            ? handleRerunReview
-                            : undefined
-                        } />)
+                        push(
+                          <TaskDetail
+                            task={task}
+                            allowClear
+                            onRerunReview={
+                              task.command === "review-pr" && task.prUrl
+                                ? handleRerunReview
+                                : undefined
+                            }
+                          />,
+                        )
                       }
                     />
                     {gitUrl && (

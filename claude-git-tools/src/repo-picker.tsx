@@ -1,7 +1,19 @@
-import { Action, ActionPanel, Icon, List } from "@raycast/api";
+import {
+  Action,
+  ActionPanel,
+  Icon,
+  List,
+  showToast,
+  Toast,
+} from "@raycast/api";
 import { useState, useEffect, useCallback } from "react";
-import { getDirHistory, addDirHistory, removeDirHistory } from "./storage";
-import { getAllGitRepos } from "./git-utils";
+import {
+  getDirHistory,
+  addDirHistory,
+  removeDirHistory,
+  addFolder,
+} from "./storage";
+import { getAllGitRepos, pickFolderDialog } from "./git-utils";
 
 interface RepoPickerProps {
   primaryActionTitle: string;
@@ -42,6 +54,21 @@ export function RepoPicker({ primaryActionTitle, onSelect }: RepoPickerProps) {
     onSelect(fullPath);
   }
 
+  async function handleAddFolder() {
+    const selected = await pickFolderDialog();
+    if (selected) {
+      await addFolder(selected);
+      await refresh();
+      await showToast({
+        style: Toast.Style.Success,
+        title: "Folder added",
+        message: selected,
+      });
+    }
+  }
+
+  const noRepos = !isLoading && repos.length === 0 && history.length === 0;
+
   return (
     <List
       isLoading={isLoading}
@@ -49,58 +76,77 @@ export function RepoPicker({ primaryActionTitle, onSelect }: RepoPickerProps) {
       onSearchTextChange={setSearchText}
       searchBarPlaceholder="Search repositories..."
     >
-      {filteredHistory.length > 0 && (
-        <List.Section title="Recent">
-          {filteredHistory.map((dir) => {
-            const display =
-              repos.find((r) => r.fullPath === dir)?.displayName || dir;
-            return (
+      {noRepos ? (
+        <List.EmptyView
+          icon={Icon.Folder}
+          title="No Folders Configured"
+          description="Press Enter to add a folder to scan for git repositories"
+          actions={
+            <ActionPanel>
+              <Action
+                title="Add Folder"
+                icon={Icon.Plus}
+                onAction={handleAddFolder}
+              />
+            </ActionPanel>
+          }
+        />
+      ) : (
+        <>
+          {filteredHistory.length > 0 && (
+            <List.Section title="Recent">
+              {filteredHistory.map((dir) => {
+                const display =
+                  repos.find((r) => r.fullPath === dir)?.displayName || dir;
+                return (
+                  <List.Item
+                    key={`recent-${dir}`}
+                    icon={Icon.Clock}
+                    title={display}
+                    subtitle={dir}
+                    actions={
+                      <ActionPanel>
+                        <Action
+                          title={primaryActionTitle}
+                          onAction={() => handleSelect(dir)}
+                        />
+                        <Action
+                          title="Remove from History"
+                          icon={Icon.Trash}
+                          style={Action.Style.Destructive}
+                          shortcut={{ modifiers: ["cmd"], key: "d" }}
+                          onAction={async () => {
+                            await removeDirHistory(dir);
+                            await refresh();
+                          }}
+                        />
+                      </ActionPanel>
+                    }
+                  />
+                );
+              })}
+            </List.Section>
+          )}
+          <List.Section title={hasSearch ? "Results" : "All Repositories"}>
+            {filteredRepos.map((repo) => (
               <List.Item
-                key={`recent-${dir}`}
-                icon={Icon.Clock}
-                title={display}
-                subtitle={dir}
+                key={repo.fullPath}
+                icon={Icon.Folder}
+                title={repo.displayName}
+                subtitle={repo.fullPath}
                 actions={
                   <ActionPanel>
                     <Action
                       title={primaryActionTitle}
-                      onAction={() => handleSelect(dir)}
-                    />
-                    <Action
-                      title="Remove from History"
-                      icon={Icon.Trash}
-                      style={Action.Style.Destructive}
-                      shortcut={{ modifiers: ["cmd"], key: "d" }}
-                      onAction={async () => {
-                        await removeDirHistory(dir);
-                        await refresh();
-                      }}
+                      onAction={() => handleSelect(repo.fullPath)}
                     />
                   </ActionPanel>
                 }
               />
-            );
-          })}
-        </List.Section>
+            ))}
+          </List.Section>
+        </>
       )}
-      <List.Section title={hasSearch ? "Results" : "All Repositories"}>
-        {filteredRepos.map((repo) => (
-          <List.Item
-            key={repo.fullPath}
-            icon={Icon.Folder}
-            title={repo.displayName}
-            subtitle={repo.fullPath}
-            actions={
-              <ActionPanel>
-                <Action
-                  title={primaryActionTitle}
-                  onAction={() => handleSelect(repo.fullPath)}
-                />
-              </ActionPanel>
-            }
-          />
-        ))}
-      </List.Section>
     </List>
   );
 }

@@ -7,14 +7,42 @@ import {
   Toast,
 } from "@raycast/api";
 import { useState, useEffect, useCallback } from "react";
-import { getFolders, addFolder, removeFolder } from "./storage";
+import {
+  getFolders,
+  addFolder,
+  removeFolder,
+  getSkillPath,
+  setSkillPath,
+  removeSkillPath,
+  type SkillCommand,
+} from "./storage";
+import { pickSkillFile } from "./skill-picker";
+import { pickFolderDialog } from "./git-utils";
+
+const SKILL_COMMANDS: { command: SkillCommand; label: string }[] = [
+  { command: "git-push", label: "Git Push" },
+  { command: "create-pr", label: "Create PR" },
+  { command: "review-pr", label: "Review PR" },
+];
 
 export default function ManageFolders() {
   const [folders, setFolders] = useState<string[]>([]);
+  const [skills, setSkills] = useState<Record<SkillCommand, string | null>>({
+    "git-push": null,
+    "create-pr": null,
+    "review-pr": null,
+  });
   const [isLoading, setIsLoading] = useState(true);
 
   const refresh = useCallback(async () => {
-    setFolders(await getFolders());
+    const [f, gp, cp, rp] = await Promise.all([
+      getFolders(),
+      getSkillPath("git-push"),
+      getSkillPath("create-pr"),
+      getSkillPath("review-pr"),
+    ]);
+    setFolders(f);
+    setSkills({ "git-push": gp, "create-pr": cp, "review-pr": rp });
     setIsLoading(false);
   }, []);
 
@@ -23,23 +51,15 @@ export default function ManageFolders() {
   }, [refresh]);
 
   async function handleAddFolder() {
-    const { execSync } = await import("child_process");
-    try {
-      const selected = execSync(
-        `osascript -e 'POSIX path of (choose folder with prompt "Select a folder to scan")'`,
-        { encoding: "utf-8", timeout: 30000 },
-      ).trim();
-      if (selected) {
-        await addFolder(selected.replace(/\/$/, ""));
-        await refresh();
-        await showToast({
-          style: Toast.Style.Success,
-          title: "Added",
-          message: selected,
-        });
-      }
-    } catch {
-      // user cancelled
+    const selected = await pickFolderDialog();
+    if (selected) {
+      await addFolder(selected);
+      await refresh();
+      await showToast({
+        style: Toast.Style.Success,
+        title: "Added",
+        message: selected,
+      });
     }
   }
 
@@ -92,6 +112,54 @@ export default function ManageFolders() {
             }
           />
         )}
+      </List.Section>
+      <List.Section title="Skills">
+        {SKILL_COMMANDS.map(({ command, label }) => {
+          const path = skills[command];
+          return (
+            <List.Item
+              key={command}
+              icon={path ? Icon.Document : Icon.QuestionMarkCircle}
+              title={label}
+              accessories={[{ text: path || "Not configured" }]}
+              actions={
+                <ActionPanel>
+                  <Action
+                    title="Select Skill File"
+                    icon={Icon.Document}
+                    onAction={async () => {
+                      const selected = await pickSkillFile(label);
+                      if (selected) {
+                        await setSkillPath(command, selected);
+                        await refresh();
+                        await showToast({
+                          style: Toast.Style.Success,
+                          title: "Skill configured",
+                        });
+                      }
+                    }}
+                  />
+                  {path && (
+                    <Action
+                      title="Remove Skill"
+                      icon={Icon.Trash}
+                      style={Action.Style.Destructive}
+                      shortcut={{ modifiers: ["cmd"], key: "d" }}
+                      onAction={async () => {
+                        await removeSkillPath(command);
+                        await refresh();
+                        await showToast({
+                          style: Toast.Style.Success,
+                          title: "Skill removed",
+                        });
+                      }}
+                    />
+                  )}
+                </ActionPanel>
+              }
+            />
+          );
+        })}
       </List.Section>
     </List>
   );
