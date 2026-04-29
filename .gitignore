@@ -29,6 +29,6 @@ Thumbs.db
 /tmp/
 *.log
 
-.claude.local.md
+CLAUDE.local.md
 docs/superpowers
 **/.claude-git-push-history

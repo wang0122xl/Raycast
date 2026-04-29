@@ -4,79 +4,84 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Raycast extension for git automation powered by Claude Code CLI. Users select a repo, pick a command (git-push, create-pr, review-pr), and the extension spawns a detached Claude process that executes the operation and streams formatted output back to the Raycast UI.
+A local Raycast project containing extensions, scripts, and commands for developer workflow automation. Each subdirectory is an independent module — extensions live under `extensions/`, shell-based script commands live under `scripts/`.
+
+## Project Structure
+
+```
+extensions/          # Raycast extensions (each subdirectory is a standalone extension)
+scripts/             # Raycast Script Commands (standalone shell scripts)
+```
+
+Each module has its own README (EN + CN). See root `README.md` for navigation links.
 
 ## Build & Development
 
+Extensions use the Raycast CLI toolchain:
+
 ```bash
-cd claude-git-tools && npm install
+cd extensions/<name> && npm install
 
 npm run build       # ray build
-npm run dev         # ray develop (watch mode — run manually in terminal)
+npm run dev         # ray develop (watch mode)
 npm run lint        # ray lint
 npm run fix-lint    # ray lint --fix
 ```
 
-No test framework is configured. All source is in `claude-git-tools/src/`.
+No test framework is configured.
 
-## Architecture
+## Code Conventions
 
-### Execution Flow
+### TypeScript
 
-1. User picks a repo via `RepoPicker` (shared by git-push, create-pr, review-pr)
-2. `SkillGate` checks if a `.md` skill file is configured for the command; prompts for selection if not
-3. `buildClaudeCommand()` in `task-manager.ts` constructs the CLI invocation:
-   - With skill file: passes `--append-system-prompt-file <skillFile>` and injects prompt via `$ARGUMENTS=<value>`
-   - Without skill file: falls back to slash commands (`/git-push-changes`, `/create-pr <branch>`, `/pr-review <url>`)
-   - Always includes: `--dangerously-skip-permissions --verbose --model <model> --output-format stream-json --include-partial-messages --include-hook-events`
-4. `runTask()` spawns a detached bash process (`spawn()` with `detached: true`, `child.unref()`)
-5. Agent JSON stdout is piped through an embedded Node.js formatter script (`outputFormatterScript`) that converts stream-json events into human-readable markdown
-6. Output is written to `/tmp/claude-git-tools-tasks/{id}.log`, read on-demand by `TaskDetail`
+- Strict mode enabled (`"strict": true`, target ES2022)
+- Prefer `interface` for object shapes, `type` for unions and simple aliases
+- Use explicit `import type` for type-only imports
+- Use `async/await` over `.then()` chains
+- Use `??` for nullish coalescing, `?.` for optional chaining
 
-### Key Files
+### State Management
 
-- `task-manager.ts` — Core engine: process spawning, command construction, embedded output formatter, process lifecycle (stale reaping at 10min, SIGTERM→SIGKILL cleanup)
-- `storage.ts` — Raycast `LocalStorage` wrapper for tasks, folders, branch history, model selection, skill paths
-- `git-utils.ts` — Repo discovery (3-level deep `.git` scan), remote URL resolution with 60s cache, `gh` CLI wrapper
-- `task-detail.tsx` — Real-time output display with URL extraction (GitHub PR URLs, commit URLs, SSH→HTTPS conversion) and `terminal-notifier` integration
-- `repo-picker.tsx` — Reusable repo selector with recent history (top 20)
-- `skill-picker.tsx` — `SkillGate` component that gates commands behind skill file selection
+- Centralize state access behind a dedicated storage module wrapping Raycast `LocalStorage`
+- UI components must not call `LocalStorage` directly
+- Immutable updates only — spread to create new objects, never mutate in place
 
-### Per-Task File Convention
+### Components
 
-Each task creates three files in `/tmp/claude-git-tools-tasks/`:
-- `{id}.log` — streamed output
-- `{id}.pid` — process ID for signal handling
-- `{id}.exit` — exit code written on completion
+- PascalCase for components, camelCase for functions and variables
+- One entry-point file per Raycast command (e.g. `git-push.tsx`)
+- Extract shared UI into reusable components (pickers, detail views)
+- Use `isLoading` state with Raycast's `<List isLoading />` / `<Detail isLoading />`
+- Use `confirmAlert()` before destructive actions (delete, merge, stop)
 
-### Output Formatter
+### Error Handling
 
-The formatter is a template literal in `task-manager.ts`, written to `/tmp/claude-git-tools-tasks/format-agent-output.js` at runtime. It handles three agent JSON formats (Claude stream-json, Codex item events, OpenCode step events), deduplicates tool blocks via Set-based keys, and collapses noisy output.
+- Wrap async operations in try-catch; return null/empty on failure rather than throwing into UI
+- Use `showToast()` for user feedback: `Animated` during operations, `Success`/`Failure` on completion
+- Degrade gracefully when optional CLI tools are missing — don't crash
 
-### Auto-Refresh Intervals
+### Process Spawning
 
-- Task list: 3s (running), 30s (finished)
-- Task detail: 1s while running
+- Long-running tasks: `spawn()` with `detached: true` + `child.unref()`
+- Track processes via PID files; implement cleanup with SIGTERM → wait → SIGKILL
+- Escape shell arguments with a dedicated `shellQuote()` utility
 
-## Raycast Commands (6 total)
+### Shell Scripts (scripts/)
 
-| Command | Entry Point | Description |
-|---------|------------|-------------|
-| git-push | `git-push.tsx` | Push via Claude agent |
-| create-pr | `create-pr.tsx` | Create PR with branch picker |
-| review-pr | `review-pr.tsx` | Review/merge PRs via Claude |
-| view-tasks | `view-tasks.tsx` | Monitor running/completed tasks |
-| manage-folders | `manage-folders.tsx` | Configure scan folders and skills |
-| manage-model | `manage-model.tsx` | Select Claude model (haiku/sonnet/opus) |
+- Include Raycast metadata headers (`@raycast.schemaVersion`, `@raycast.title`, `@raycast.mode`, `@raycast.argument*`)
+- Use `nohup bash -c "..." > /dev/null 2>&1 &` for detached execution
+- Support `zoxide` for fuzzy path resolution with fallback to literal paths
+- Send macOS notifications via `terminal-notifier` on completion
 
-## Patterns to Follow
+### Constants & Configuration
 
-- Immutable task updates: `updateTask()` merges partials via spread, never mutates in place
-- All state flows through `storage.ts` — no direct LocalStorage calls from UI components
-- Process cleanup uses recursive child-process kill with bash trap handlers for SIGTERM/INT
-- URL extraction in `task-detail.tsx` replaces parsed URL bases with the actual git remote base via `getGitRemoteBaseUrl()`
+- Define constants at module top level (e.g. `TASK_DIR`, `STALE_TASK_MAX_AGE_MS`)
+- Use `Record<K, V>` for label/config maps
+- Keep defaults explicit and named (e.g. `DEFAULT_MODEL = "sonnet"`)
 
 ## Dependencies
 
-- Requires `claude` CLI in PATH with support for `--output-format stream-json`
-- Optional: `gh` CLI (for PR operations), `terminal-notifier` (for macOS notifications)
+- Raycast CLI (`ray build`, `ray develop`, `ray lint`)
+- ESLint with `@raycast/eslint-config`, Prettier
+- `@raycast/api`, `@raycast/utils`
+- TypeScript 5.8+ in strict mode

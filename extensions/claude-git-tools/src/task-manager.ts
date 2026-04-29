@@ -96,10 +96,18 @@ function buildClaudeCommand(
     prompt = skillFile ? `$ARGUMENTS=${prUrl}` : `/pr-review ${prUrl}`;
   }
 
+  const allowedTools = [
+    "Bash(git:*)", "Bash(gh:*)",
+    "Bash(ls:*)", "Bash(cat:*)", "Bash(find:*)", "Bash(grep:*)",
+    "Bash(mkdir:*)", "Bash(cp:*)", "Bash(wc:*)",
+    "Read", "Write", "Edit", "Grep", "Glob",
+  ].join(",");
+
   const parts = [
     "claude",
     "-p",
-    "--dangerously-skip-permissions",
+    "--allowedTools",
+    shellQuote(allowedTools),
     "--verbose",
     "--model",
     shellQuote(model),
