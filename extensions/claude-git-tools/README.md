@@ -92,7 +92,6 @@ The extension extracts URLs from Claude's output for clickable `terminal-notifie
 |---------|-------------|---------|
 | **git-push** | Commit URL | `https://github.com/owner/repo/commit/abc1234` |
 | **create-pr** | PR URL | `https://github.com/owner/repo/pull/42` |
-| **review-pr** | PR URL | `https://github.com/owner/repo/pull/42` |
 
 Supported platforms: GitHub, GitLab, Bitbucket. SSH remotes are auto-converted to HTTPS.
 

@@ -92,7 +92,6 @@ npm run dev
 |------|-----------|------|
 | **git-push** | Commit URL | `https://github.com/owner/repo/commit/abc1234` |
 | **create-pr** | PR URL | `https://github.com/owner/repo/pull/42` |
-| **review-pr** | PR URL | `https://github.com/owner/repo/pull/42` |
 
 支持平台：GitHub、GitLab、Bitbucket。SSH 远程地址自动转换为 HTTPS。
 
