@@ -4,110 +4,79 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a Raycast extension that provides git automation powered by AI code agents (Claude, Codex, OpenCode). The extension allows users to:
-- Execute git push operations via AI agents
-- Create pull requests with AI-generated descriptions
-- Manage multiple code agents and scan folders for git repositories
-- View and monitor running/completed tasks with real-time output
+Raycast extension for git automation powered by Claude Code CLI. Users select a repo, pick a command (git-push, create-pr, review-pr), and the extension spawns a detached Claude process that executes the operation and streams formatted output back to the Raycast UI.
 
 ## Build & Development
 
 ```bash
-# Install dependencies
 cd claude-git-tools && npm install
 
-# Build the extension
-npm run build
-
-# Development mode (watch for changes)
-npm run dev
-
-# Lint
-npm run lint
-
-# Fix linting issues
-npm run fix-lint
+npm run build       # ray build
+npm run dev         # ray develop (watch mode — run manually in terminal)
+npm run lint        # ray lint
+npm run fix-lint    # ray lint --fix
 ```
+
+No test framework is configured. All source is in `claude-git-tools/src/`.
 
 ## Architecture
 
-### Task Execution System
+### Execution Flow
 
-The core architecture revolves around **background task execution** with **agent output formatting**:
+1. User picks a repo via `RepoPicker` (shared by git-push, create-pr, review-pr)
+2. `SkillGate` checks if a `.md` skill file is configured for the command; prompts for selection if not
+3. `buildClaudeCommand()` in `task-manager.ts` constructs the CLI invocation:
+   - With skill file: passes `--append-system-prompt-file <skillFile>` and injects prompt via `$ARGUMENTS=<value>`
+   - Without skill file: falls back to slash commands (`/git-push-changes`, `/create-pr <branch>`, `/pr-review <url>`)
+   - Always includes: `--dangerously-skip-permissions --verbose --model <model> --output-format stream-json --include-partial-messages --include-hook-events`
+4. `runTask()` spawns a detached bash process (`spawn()` with `detached: true`, `child.unref()`)
+5. Agent JSON stdout is piped through an embedded Node.js formatter script (`outputFormatterScript`) that converts stream-json events into human-readable markdown
+6. Output is written to `/tmp/claude-git-tools-tasks/{id}.log`, read on-demand by `TaskDetail`
 
-1. **Task Manager** (`task-manager.ts`):
-   - Spawns detached shell processes that run AI agents (claude/codex/opencode)
-   - Each task writes to a temp file in `/tmp/claude-git-tools-tasks/`
-   - Tracks PID, exit code, and output for each task
-   - Uses a **unified output formatter** (`outputFormatterScript`) that pipes agent JSON output through a Node.js script to filter and format events
+### Key Files
 
-2. **Output Formatter** (embedded in `task-manager.ts`):
-   - Handles three different JSON formats:
-     - **Claude**: `stream-json` format with `content_block`, `delta`, `tool_use`, `tool_result` events
-     - **Codex**: `item.started`, `item.completed` events with nested `item` payload
-     - **OpenCode**: `step_start`, `step_finish`, `tool_use`, `text` events with nested `part` payload
-   - Filters out metadata events (step_start, step_finish, turn.started, etc.)
-   - Extracts tool commands, outputs, and assistant text
-   - Deduplicates repeated blocks to reduce noise
+- `task-manager.ts` — Core engine: process spawning, command construction, embedded output formatter, process lifecycle (stale reaping at 10min, SIGTERM→SIGKILL cleanup)
+- `storage.ts` — Raycast `LocalStorage` wrapper for tasks, folders, branch history, model selection, skill paths
+- `git-utils.ts` — Repo discovery (3-level deep `.git` scan), remote URL resolution with 60s cache, `gh` CLI wrapper
+- `task-detail.tsx` — Real-time output display with URL extraction (GitHub PR URLs, commit URLs, SSH→HTTPS conversion) and `terminal-notifier` integration
+- `repo-picker.tsx` — Reusable repo selector with recent history (top 20)
+- `skill-picker.tsx` — `SkillGate` component that gates commands behind skill file selection
 
-3. **Storage** (`storage.ts`):
-   - Uses Raycast's `LocalStorage` API for persistence
-   - Stores: tasks, folder configurations, directory history, branch history, selected code agent
-   - Task schema includes: id, command, dir, label, branch, status, outputFile, pidFile, exitCodeFile, startTime
+### Per-Task File Convention
 
-4. **Git Repository Discovery** (`git-utils.ts`):
-   - Scans configured folders up to 3 levels deep for `.git` directories
-   - Builds a flat list of repositories with display names
+Each task creates three files in `/tmp/claude-git-tools-tasks/`:
+- `{id}.log` — streamed output
+- `{id}.pid` — process ID for signal handling
+- `{id}.exit` — exit code written on completion
 
-### UI Components
+### Output Formatter
 
-- **RepoPicker**: Reusable component for selecting git repositories (used by git-push and create-pr)
-- **TaskDetail**: Shows real-time task output with markdown rendering (uses `diff` code blocks for terminal-like appearance)
-- **ViewTasks**: Lists running and finished tasks with auto-refresh (3s for running, 30s for finished)
-- **ManageFolders**: Configure code agent selection and folder scanning
+The formatter is a template literal in `task-manager.ts`, written to `/tmp/claude-git-tools-tasks/format-agent-output.js` at runtime. It handles three agent JSON formats (Claude stream-json, Codex item events, OpenCode step events), deduplicates tool blocks via Set-based keys, and collapses noisy output.
 
-### Git URL Extraction
+### Auto-Refresh Intervals
 
-The `extractGitUrl()` function in `task-detail.tsx` parses agent output to find:
-- **create-pr**: GitHub PR URLs (`https://github.com/.../pull/123`)
-- **git-push**: Git host URLs (GitHub/GitLab/Bitbucket) or any HTTPS URL
+- Task list: 3s (running), 30s (finished)
+- Task detail: 1s while running
 
-## Agent Command Construction
+## Raycast Commands (6 total)
 
-Each agent has a specific command format in `buildAgentCmd()`:
+| Command | Entry Point | Description |
+|---------|------------|-------------|
+| git-push | `git-push.tsx` | Push via Claude agent |
+| create-pr | `create-pr.tsx` | Create PR with branch picker |
+| review-pr | `review-pr.tsx` | Review/merge PRs via Claude |
+| view-tasks | `view-tasks.tsx` | Monitor running/completed tasks |
+| manage-folders | `manage-folders.tsx` | Configure scan folders and skills |
+| manage-model | `manage-model.tsx` | Select Claude model (haiku/sonnet/opus) |
 
-- **Claude**: `claude -p "<prompt>" --dangerously-skip-permissions --verbose --output-format stream-json --include-partial-messages`
-- **Codex**: `codex exec --full-auto --json "<prompt>"`
-- **OpenCode**: `opencode run --format json "<prompt>"`
+## Patterns to Follow
 
-## Key Patterns
+- Immutable task updates: `updateTask()` merges partials via spread, never mutates in place
+- All state flows through `storage.ts` — no direct LocalStorage calls from UI components
+- Process cleanup uses recursive child-process kill with bash trap handlers for SIGTERM/INT
+- URL extraction in `task-detail.tsx` replaces parsed URL bases with the actual git remote base via `getGitRemoteBaseUrl()`
 
-1. **Detached Process Execution**: Tasks run in detached bash processes with `nohup` and `&` to survive Raycast window closure
-2. **Terminal Notifications**: Uses `terminal-notifier` to alert users when tasks complete (with git URLs when available)
-3. **Auto-refresh**: Task list and detail views poll for status updates at different intervals based on task state
-4. **Immutable Task Updates**: Tasks are updated via `updateTask()` which merges partial updates into the stored task list
+## Dependencies
 
-## File Structure
-
-```
-claude-git-tools/
-├── src/
-│   ├── git-push.tsx          # Git push command entry
-│   ├── create-pr.tsx         # Create PR command entry (with branch picker)
-│   ├── manage-folders.tsx    # Agent & folder configuration
-│   ├── view-tasks.tsx        # Task list view
-│   ├── task-detail.tsx       # Task detail view with output
-│   ├── task-manager.ts       # Core task execution & output formatting
-│   ├── storage.ts            # LocalStorage persistence layer
-│   ├── git-utils.ts          # Git repository scanning
-│   └── repo-picker.tsx       # Reusable repo selection component
-├── package.json              # Extension manifest with 4 commands
-└── tsconfig.json             # TypeScript config (ES2022, node16 modules)
-```
-
-## Important Notes
-
-- The output formatter script is embedded as a template literal in `task-manager.ts` and written to `/tmp/claude-git-tools-tasks/format-agent-output.js` on first use
-- Task output files persist in `/tmp/` and are read on-demand (not stored in LocalStorage)
-- The extension requires `claude`, `codex`, or `opencode` CLI tools to be installed and in PATH
-- Git operations are executed in the selected repository's directory context
+- Requires `claude` CLI in PATH with support for `--output-format stream-json`
+- Optional: `gh` CLI (for PR operations), `terminal-notifier` (for macOS notifications)

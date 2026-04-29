@@ -12,7 +12,7 @@ import {
   Toast,
   useNavigation,
 } from "@raycast/api";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { removeTask, updateTask, type Task } from "./storage";
 import {
   getTaskStatus,
@@ -217,6 +217,15 @@ export function TaskDetail({
   const [status, setStatus] = useState<Task["status"]>(task.status);
   const [hasAutoNavigated, setHasAutoNavigated] = useState(false);
   const [prOpen, setPrOpen] = useState(false);
+  const prevStatusRef = useRef<Task["status"]>(task.status);
+
+  const isReviewPr = task.command === "review-pr" && !!task.prUrl;
+
+  const checkReviewPrState = useCallback(async () => {
+    if (!isReviewPr || !task.prUrl) return;
+    const open = await checkPrOpen(task.prUrl, task.dir);
+    setPrOpen(open);
+  }, [isReviewPr, task.prUrl, task.dir]);
 
   const refresh = useCallback(async () => {
     const taskWithCurrentStatus = { ...task, status };
@@ -226,10 +235,10 @@ export function TaskDetail({
     setOutput(nextOutput);
 
     if (nextStatus !== status) {
+      const wasRunning = status === "running";
       setStatus(nextStatus);
       await updateTask(task.id, { status: nextStatus });
 
-      // Auto-navigate to review report when review-pr task completes
       if (
         !hasAutoNavigated &&
         task.command === "review-pr" &&
@@ -239,20 +248,28 @@ export function TaskDetail({
         const report = extractReviewReport(nextOutput);
         if (report) {
           setHasAutoNavigated(true);
+          const prState = await checkPrOpen(task.prUrl, task.dir).then(
+            (o) => (o ? "open" : "closed"),
+          );
           push(
             <ReviewReportDetail
               markdown={report}
               gitUrl={task.prUrl}
               navigationTitle={task.label}
-              prState="open"
+              prState={prState}
               dirPath={task.dir}
               onReview={onRerunReview}
             />,
           );
+          return;
         }
       }
+
+      if (wasRunning && nextStatus === "completed" && isReviewPr) {
+        await checkReviewPrState();
+      }
     }
-  }, [status, task, hasAutoNavigated, push]);
+  }, [status, task, hasAutoNavigated, push, isReviewPr, checkReviewPrState, onRerunReview]);
 
   useEffect(() => {
     void refresh();
@@ -261,17 +278,67 @@ export function TaskDetail({
     return () => clearInterval(timer);
   }, [refresh]);
 
+  useEffect(() => {
+    if (!isReviewPr) return;
+    void checkReviewPrState();
+  }, [isReviewPr, checkReviewPrState]);
+
   const running = status === "running";
   const finished = status === "completed";
   const gitUrl = finished ? extractGitUrl(task, output) : null;
 
   useEffect(() => {
     if (task.command !== "create-pr" || !gitUrl) {
-      setPrOpen(false);
       return;
     }
     void checkPrOpen(gitUrl, task.dir).then(setPrOpen);
   }, [task.command, task.dir, gitUrl]);
+
+  const prNumber = extractPrNumber(task.prUrl || gitUrl || "");
+
+  async function handleMergePR(method: MergeMethod) {
+    if (!prNumber) return;
+    const confirmed = await confirmAlert({
+      title: `${MERGE_METHOD_LABELS[method]} PR #${prNumber}?`,
+      message: task.label,
+      primaryAction: { title: MERGE_METHOD_LABELS[method], style: Alert.ActionStyle.Default },
+      dismissAction: { title: "Cancel" },
+    });
+    if (!confirmed) return;
+    const toast = await showToast({ style: Toast.Style.Animated, title: "Merging PR..." });
+    try {
+      await execGhAsync(["pr", "merge", prNumber, method], task.dir);
+      toast.style = Toast.Style.Success;
+      toast.title = `PR #${prNumber} merged`;
+      setPrOpen(false);
+    } catch (error) {
+      toast.style = Toast.Style.Failure;
+      toast.title = "Failed to merge PR";
+      toast.message = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  async function handleClosePR() {
+    if (!prNumber) return;
+    const confirmed = await confirmAlert({
+      title: `Close PR #${prNumber}?`,
+      message: task.label,
+      primaryAction: { title: "Close", style: Alert.Style.Destructive },
+      dismissAction: { title: "Cancel" },
+    });
+    if (!confirmed) return;
+    const toast = await showToast({ style: Toast.Style.Animated, title: "Closing PR..." });
+    try {
+      await execGhAsync(["pr", "close", prNumber], task.dir);
+      toast.style = Toast.Style.Success;
+      toast.title = `PR #${prNumber} closed`;
+      setPrOpen(false);
+    } catch (error) {
+      toast.style = Toast.Style.Failure;
+      toast.title = "Failed to close PR";
+      toast.message = error instanceof Error ? error.message : String(error);
+    }
+  }
 
   async function handleStop() {
     await showToast({ style: Toast.Style.Animated, title: "Stopping task..." });
@@ -315,7 +382,7 @@ export function TaskDetail({
                     markdown={reviewReport}
                     gitUrl={task.prUrl!}
                     navigationTitle={task.label}
-                    prState="open"
+                    prState={prOpen ? "open" : "closed"}
                     dirPath={task.dir}
                     onReview={onRerunReview}
                   />,
@@ -329,6 +396,38 @@ export function TaskDetail({
               icon={Icon.Window}
               onAction={() => void handleCloseMainWindow()}
             />
+          )}
+          {finished && prOpen && prNumber && (
+            <>
+              <ActionPanel.Submenu
+                title="Approve & Merge"
+                icon={Icon.Check}
+                shortcut={{ modifiers: ["cmd"], key: "y" }}
+              >
+                <Action
+                  title="Merge"
+                  icon={Icon.Check}
+                  onAction={() => void handleMergePR("--merge")}
+                />
+                <Action
+                  title="Rebase and Merge"
+                  icon={Icon.ArrowRight}
+                  onAction={() => void handleMergePR("--rebase")}
+                />
+                <Action
+                  title="Squash and Merge"
+                  icon={Icon.Layers}
+                  onAction={() => void handleMergePR("--squash")}
+                />
+              </ActionPanel.Submenu>
+              <Action
+                title="Close PR"
+                icon={Icon.XMarkCircle}
+                style={Action.Style.Destructive}
+                shortcut={{ modifiers: ["cmd"], key: "n" }}
+                onAction={() => void handleClosePR()}
+              />
+            </>
           )}
           {gitUrl && (
             <>

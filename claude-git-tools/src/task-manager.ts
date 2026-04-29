@@ -59,7 +59,7 @@ function ensureTaskDir() {
 }
 
 function shellQuote(value: string): string {
-  return JSON.stringify(value);
+  return "'" + value.replace(/'/g, "'\\''") + "'";
 }
 
 function requireTargetBranch(options: TaskOptions): string {

@@ -36,7 +36,13 @@ interface PullRequest {
   state: string;
   author: string;
   updatedAt: string;
+  createdAt: string;
   headRefName: string;
+  baseRefName: string;
+  mergeable: string;
+  additions: number;
+  deletions: number;
+  changedFiles: number;
 }
 
 interface PRReviewState {
@@ -53,7 +59,7 @@ async function fetchPRs(dir: string): Promise<PullRequest[]> {
     "--state",
     state,
     "--json",
-    "number,title,url,state,author,updatedAt,headRefName",
+    "number,title,url,state,author,updatedAt,createdAt,headRefName,baseRefName,mergeable,additions,deletions,changedFiles",
     "--limit",
     "50",
   ];
@@ -94,7 +100,13 @@ function parsePRs(json: string, fallbackState: string): PullRequest[] {
         state: string;
         author: { login: string };
         updatedAt: string;
+        createdAt: string;
         headRefName: string;
+        baseRefName: string;
+        mergeable: string;
+        additions: number;
+        deletions: number;
+        changedFiles: number;
       }) => ({
         number: item.number,
         title: item.title,
@@ -102,7 +114,13 @@ function parsePRs(json: string, fallbackState: string): PullRequest[] {
         state: (item.state || fallbackState).toLowerCase(),
         author: item.author?.login || "unknown",
         updatedAt: item.updatedAt,
+        createdAt: item.createdAt || item.updatedAt,
         headRefName: item.headRefName || "",
+        baseRefName: item.baseRefName || "",
+        mergeable: (item.mergeable || "UNKNOWN").toUpperCase(),
+        additions: item.additions || 0,
+        deletions: item.deletions || 0,
+        changedFiles: item.changedFiles || 0,
       }),
     );
   } catch {
@@ -319,25 +337,95 @@ function PRPicker({
     }
   }
 
+  function prStateIcon(state: string) {
+    switch (state) {
+      case "open":
+        return { source: Icon.Circle, tintColor: Color.Green };
+      case "merged":
+        return { source: Icon.CheckCircle, tintColor: Color.Purple };
+      default:
+        return { source: Icon.XMarkCircle, tintColor: Color.Red };
+    }
+  }
+
+  function formatDate(dateStr: string) {
+    const d = new Date(dateStr);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  }
+
+  function prStateLabel(state: string) {
+    switch (state) {
+      case "open":
+        return "Open";
+      case "merged":
+        return "Merged";
+      default:
+        return "Closed";
+    }
+  }
+
+  function mergeableLabel(mergeable: string) {
+    switch (mergeable) {
+      case "MERGEABLE":
+        return "No Conflicts";
+      case "CONFLICTING":
+        return "Has Conflicts";
+      default:
+        return "Unknown";
+    }
+  }
+
+  function mergeableColor(mergeable: string) {
+    switch (mergeable) {
+      case "MERGEABLE":
+        return Color.Green;
+      case "CONFLICTING":
+        return Color.Red;
+      default:
+        return Color.SecondaryText;
+    }
+  }
+
   function renderPRItem(pr: PullRequest, isOpen: boolean) {
     const reviewState = reviewStates.get(pr.url);
+
     const accessories: List.Item.Accessory[] = [];
 
     if (reviewState?.hasReport) {
       accessories.push({
         tag: { value: "Reviewed", color: Color.Green },
-        icon: Icon.Document,
       });
     } else if (reviewState?.isRunning) {
       accessories.push({
-        tag: { value: "Reviewing...", color: Color.Orange },
-        icon: Icon.CircleProgress,
+        tag: { value: "Reviewing", color: Color.Orange },
       });
     }
 
-    accessories.push(
-      { text: pr.author },
-      { text: new Date(pr.updatedAt).toLocaleDateString() },
+    const detail = (
+      <List.Item.Detail
+        metadata={
+          <List.Item.Detail.Metadata>
+            <List.Item.Detail.Metadata.Label title="Status" text={prStateLabel(pr.state)} icon={prStateIcon(pr.state)} />
+            <List.Item.Detail.Metadata.Label title="Author" text={pr.author} icon={Icon.Person} />
+            <List.Item.Detail.Metadata.Separator />
+            <List.Item.Detail.Metadata.Label title="Branch" text={`${pr.headRefName} → ${pr.baseRefName}`} />
+            {pr.state !== "merged" && (
+              <List.Item.Detail.Metadata.TagList title="Mergeable">
+                <List.Item.Detail.Metadata.TagList.Item text={mergeableLabel(pr.mergeable)} color={mergeableColor(pr.mergeable)} />
+              </List.Item.Detail.Metadata.TagList>
+            )}
+            <List.Item.Detail.Metadata.Separator />
+            <List.Item.Detail.Metadata.Label title="Changes" text={`+${pr.additions} -${pr.deletions} (${pr.changedFiles} files)`} icon={Icon.CodeBlock} />
+            <List.Item.Detail.Metadata.Label title="Created" text={formatDate(pr.createdAt)} icon={Icon.Calendar} />
+            <List.Item.Detail.Metadata.Label title="Updated" text={formatDate(pr.updatedAt)} icon={Icon.Clock} />
+            <List.Item.Detail.Metadata.Separator />
+            <List.Item.Detail.Metadata.Link title="GitHub" text={`PR #${pr.number}`} target={pr.url} />
+          </List.Item.Detail.Metadata>
+        }
+      />
     );
 
     const actions = (
@@ -432,10 +520,11 @@ function PRPicker({
     return (
       <List.Item
         key={pr.number}
-        icon={isOpen ? Icon.CircleProgress : Icon.CheckCircle}
-        title={`#${pr.number} ${pr.title}`}
-        subtitle={pr.headRefName}
+        icon={prStateIcon(pr.state)}
+        title={`#${pr.number}`}
+        subtitle={pr.title}
         accessories={accessories}
+        detail={detail}
         actions={actions}
       />
     );
@@ -444,6 +533,7 @@ function PRPicker({
   return (
     <List
       isLoading={isLoading}
+      isShowingDetail
       searchText={searchText}
       onSearchTextChange={setSearchText}
       searchBarPlaceholder="Search pull requests..."
@@ -459,7 +549,7 @@ function PRPicker({
           {closedPRs.map((pr) => renderPRItem(pr, false))}
         </List.Section>
       )}
-      {!isLoading && filtered.length === 0 && (
+      {!isLoading && openPRs.length === 0 && closedPRs.length === 0 && (
         <List.EmptyView
           title="No Pull Requests"
           description="Press ⌘R to refresh"

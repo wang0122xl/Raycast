@@ -103,7 +103,7 @@ export function RepoPicker({ primaryActionTitle, onSelect }: RepoPickerProps) {
                     key={`recent-${dir}`}
                     icon={Icon.Clock}
                     title={display}
-                    subtitle={dir}
+                    subtitle={`(${dir})`}
                     actions={
                       <ActionPanel>
                         <Action
@@ -133,7 +133,7 @@ export function RepoPicker({ primaryActionTitle, onSelect }: RepoPickerProps) {
                 key={repo.fullPath}
                 icon={Icon.Folder}
                 title={repo.displayName}
-                subtitle={repo.fullPath}
+                subtitle={`(${repo.fullPath})`}
                 actions={
                   <ActionPanel>
                     <Action
