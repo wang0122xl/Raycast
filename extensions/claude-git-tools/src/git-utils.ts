@@ -113,7 +113,10 @@ export async function pickFolderDialog(): Promise<string | null> {
   }
 }
 
-const remoteBaseUrlCache = new Map<string, { url: string | null; ts: number }>();
+const remoteBaseUrlCache = new Map<
+  string,
+  { url: string | null; ts: number }
+>();
 const CACHE_TTL_MS = 60_000;
 
 export function getGitRemoteBaseUrl(dir: string): string | null {

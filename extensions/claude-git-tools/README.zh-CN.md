@@ -95,6 +95,19 @@ npm run dev
 
 支持平台：GitHub、GitLab、Bitbucket。SSH 远程地址自动转换为 HTTPS。
 
+### 必需输出：审查报告（仅 review-pr）
+
+Review PR 命令使用 `!--------!` 分隔符从 Claude 输出中提取报告预览。Skill 必须将最终审查报告用两个 `!--------!` 标记包裹。标记之间的内容会在任务详情面板中显示为格式化的报告预览。
+
+如果缺少分隔符，审查输出仍会以原始流式文本显示，但结构化的报告预览功能将不可用。
+
+```
+!--------!
+## 审查摘要
+...报告内容...
+!--------!
+```
+
 ### 示例：create-pr skill
 
 ```markdown
@@ -110,6 +123,16 @@ npm run dev
 3. 通过 `gh pr create` 创建 PR
 4. 输出 PR URL（如 https://github.com/owner/repo/pull/123）
 ```
+
+## 截图
+
+| Git Push | Create PR | Review PR |
+|----------|-----------|-----------|
+| ![Git Push](media/git_push.png) | ![Create PR](media/create_pr.png) | ![Review PR](media/review_pr.png) |
+
+| 配置目录与 Skill | 任务详情 |
+|-----------------|---------|
+| ![配置目录](media/manage_folders.png) | ![任务详情](media/task_detail.png) |
 
 ## 开发
 

@@ -257,14 +257,14 @@ function PRPicker({
     void handleCloseMainWindow();
   }
 
-  async function handleMergePR(
-    pr: PullRequest,
-    method: MergeMethod,
-  ) {
+  async function handleMergePR(pr: PullRequest, method: MergeMethod) {
     const confirmed = await confirmAlert({
       title: `${MERGE_METHOD_LABELS[method]} PR #${pr.number}?`,
       message: pr.title,
-      primaryAction: { title: MERGE_METHOD_LABELS[method], style: Alert.ActionStyle.Default },
+      primaryAction: {
+        title: MERGE_METHOD_LABELS[method],
+        style: Alert.ActionStyle.Default,
+      },
       dismissAction: { title: "Cancel" },
     });
     if (!confirmed) return;
@@ -273,10 +273,7 @@ function PRPicker({
       title: "Merging PR...",
     });
     try {
-      await execGhAsync(
-        ["pr", "merge", String(pr.number), method],
-        dirPath,
-      );
+      await execGhAsync(["pr", "merge", String(pr.number), method], dirPath);
       toast.style = Toast.Style.Success;
       toast.title = `PR #${pr.number} merged`;
       await refresh();
@@ -408,21 +405,51 @@ function PRPicker({
       <List.Item.Detail
         metadata={
           <List.Item.Detail.Metadata>
-            <List.Item.Detail.Metadata.Label title="Status" text={prStateLabel(pr.state)} icon={prStateIcon(pr.state)} />
-            <List.Item.Detail.Metadata.Label title="Author" text={pr.author} icon={Icon.Person} />
+            <List.Item.Detail.Metadata.Label
+              title="Status"
+              text={prStateLabel(pr.state)}
+              icon={prStateIcon(pr.state)}
+            />
+            <List.Item.Detail.Metadata.Label
+              title="Author"
+              text={pr.author}
+              icon={Icon.Person}
+            />
             <List.Item.Detail.Metadata.Separator />
-            <List.Item.Detail.Metadata.Label title="Branch" text={`${pr.headRefName} → ${pr.baseRefName}`} />
+            <List.Item.Detail.Metadata.Label
+              title="Branch"
+              text={`${pr.headRefName} → ${pr.baseRefName}`}
+            />
             {pr.state !== "merged" && (
               <List.Item.Detail.Metadata.TagList title="Mergeable">
-                <List.Item.Detail.Metadata.TagList.Item text={mergeableLabel(pr.mergeable)} color={mergeableColor(pr.mergeable)} />
+                <List.Item.Detail.Metadata.TagList.Item
+                  text={mergeableLabel(pr.mergeable)}
+                  color={mergeableColor(pr.mergeable)}
+                />
               </List.Item.Detail.Metadata.TagList>
             )}
             <List.Item.Detail.Metadata.Separator />
-            <List.Item.Detail.Metadata.Label title="Changes" text={`+${pr.additions} -${pr.deletions} (${pr.changedFiles} files)`} icon={Icon.CodeBlock} />
-            <List.Item.Detail.Metadata.Label title="Created" text={formatDate(pr.createdAt)} icon={Icon.Calendar} />
-            <List.Item.Detail.Metadata.Label title="Updated" text={formatDate(pr.updatedAt)} icon={Icon.Clock} />
+            <List.Item.Detail.Metadata.Label
+              title="Changes"
+              text={`+${pr.additions} -${pr.deletions} (${pr.changedFiles} files)`}
+              icon={Icon.CodeBlock}
+            />
+            <List.Item.Detail.Metadata.Label
+              title="Created"
+              text={formatDate(pr.createdAt)}
+              icon={Icon.Calendar}
+            />
+            <List.Item.Detail.Metadata.Label
+              title="Updated"
+              text={formatDate(pr.updatedAt)}
+              icon={Icon.Clock}
+            />
             <List.Item.Detail.Metadata.Separator />
-            <List.Item.Detail.Metadata.Link title="GitHub" text={`PR #${pr.number}`} target={pr.url} />
+            <List.Item.Detail.Metadata.Link
+              title="GitHub"
+              text={`PR #${pr.number}`}
+              target={pr.url}
+            />
           </List.Item.Detail.Metadata>
         }
       />
@@ -452,7 +479,7 @@ function PRPicker({
           onAction={() => handleEnter(pr, reviewState)}
         />
         <Action.CopyToClipboard
-          title="Copy PR Link"
+          title="Copy Pr Link"
           content={pr.url}
           shortcut={{ modifiers: ["cmd"], key: "enter" }}
         />
@@ -494,7 +521,7 @@ function PRPicker({
               />
             </ActionPanel.Submenu>
             <Action
-              title="Close PR"
+              title="Close Pr"
               icon={Icon.XMarkCircle}
               style={Action.Style.Destructive}
               shortcut={{ modifiers: ["cmd"], key: "n" }}

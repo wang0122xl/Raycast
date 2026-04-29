@@ -187,23 +187,6 @@ export default function ViewTasks() {
               })();
             }
 
-            function handlePrimaryAction() {
-              if (reviewReport && task.prUrl) {
-                push(
-                  <ReviewReportDetail
-                    markdown={reviewReport}
-                    gitUrl={task.prUrl}
-                    navigationTitle={task.label}
-                    prState="open"
-                    dirPath={task.dir}
-                    onReview={handleRerunReview}
-                  />,
-                );
-              } else {
-                push(<TaskDetail task={task} allowClear />);
-              }
-            }
-
             return (
               <List.Item
                 key={task.id}
@@ -260,12 +243,12 @@ export default function ViewTasks() {
                     {task.prUrl && !gitUrl && (
                       <>
                         <Action.CopyToClipboard
-                          title="Copy PR Link"
+                          title="Copy Pr Link"
                           content={task.prUrl}
                           shortcut={{ modifiers: ["cmd"], key: "enter" }}
                         />
                         <Action
-                          title="Open PR Link"
+                          title="Open Pr Link"
                           icon={Icon.Link}
                           shortcut={{ modifiers: ["cmd"], key: "o" }}
                           onAction={() => {

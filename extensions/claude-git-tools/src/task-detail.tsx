@@ -12,7 +12,7 @@ import {
   Toast,
   useNavigation,
 } from "@raycast/api";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { removeTask, updateTask, type Task } from "./storage";
 import {
   getTaskStatus,
@@ -22,7 +22,6 @@ import {
   stopTask,
 } from "./task-manager";
 import {
-  EXTENDED_PATH,
   execGhAsync,
   extractPrNumber,
   getGitRemoteBaseUrl,
@@ -33,7 +32,10 @@ import {
 
 async function checkPrOpen(prUrl: string, dir: string): Promise<boolean> {
   try {
-    const stdout = await execGhAsync(["pr", "view", prUrl, "--json", "state"], dir);
+    const stdout = await execGhAsync(
+      ["pr", "view", prUrl, "--json", "state"],
+      dir,
+    );
     const data = JSON.parse(stdout);
     return data.state?.toLowerCase() === "open";
   } catch {
@@ -217,7 +219,7 @@ export function TaskDetail({
   const [status, setStatus] = useState<Task["status"]>(task.status);
   const [hasAutoNavigated, setHasAutoNavigated] = useState(false);
   const [prOpen, setPrOpen] = useState(false);
-  const prevStatusRef = useRef<Task["status"]>(task.status);
+
 
   const isReviewPr = task.command === "review-pr" && !!task.prUrl;
 
@@ -248,8 +250,8 @@ export function TaskDetail({
         const report = extractReviewReport(nextOutput);
         if (report) {
           setHasAutoNavigated(true);
-          const prState = await checkPrOpen(task.prUrl, task.dir).then(
-            (o) => (o ? "open" : "closed"),
+          const prState = await checkPrOpen(task.prUrl, task.dir).then((o) =>
+            o ? "open" : "closed",
           );
           push(
             <ReviewReportDetail
@@ -269,7 +271,15 @@ export function TaskDetail({
         await checkReviewPrState();
       }
     }
-  }, [status, task, hasAutoNavigated, push, isReviewPr, checkReviewPrState, onRerunReview]);
+  }, [
+    status,
+    task,
+    hasAutoNavigated,
+    push,
+    isReviewPr,
+    checkReviewPrState,
+    onRerunReview,
+  ]);
 
   useEffect(() => {
     void refresh();
@@ -301,11 +311,17 @@ export function TaskDetail({
     const confirmed = await confirmAlert({
       title: `${MERGE_METHOD_LABELS[method]} PR #${prNumber}?`,
       message: task.label,
-      primaryAction: { title: MERGE_METHOD_LABELS[method], style: Alert.ActionStyle.Default },
+      primaryAction: {
+        title: MERGE_METHOD_LABELS[method],
+        style: Alert.ActionStyle.Default,
+      },
       dismissAction: { title: "Cancel" },
     });
     if (!confirmed) return;
-    const toast = await showToast({ style: Toast.Style.Animated, title: "Merging PR..." });
+    const toast = await showToast({
+      style: Toast.Style.Animated,
+      title: "Merging PR...",
+    });
     try {
       await execGhAsync(["pr", "merge", prNumber, method], task.dir);
       toast.style = Toast.Style.Success;
@@ -327,7 +343,10 @@ export function TaskDetail({
       dismissAction: { title: "Cancel" },
     });
     if (!confirmed) return;
-    const toast = await showToast({ style: Toast.Style.Animated, title: "Closing PR..." });
+    const toast = await showToast({
+      style: Toast.Style.Animated,
+      title: "Closing PR...",
+    });
     try {
       await execGhAsync(["pr", "close", prNumber], task.dir);
       toast.style = Toast.Style.Success;
@@ -421,7 +440,7 @@ export function TaskDetail({
                 />
               </ActionPanel.Submenu>
               <Action
-                title="Close PR"
+                title="Close Pr"
                 icon={Icon.XMarkCircle}
                 style={Action.Style.Destructive}
                 shortcut={{ modifiers: ["cmd"], key: "n" }}
@@ -452,7 +471,7 @@ export function TaskDetail({
           )}
           {task.command === "create-pr" && prOpen && gitUrl && (
             <Action
-              title="Review PR"
+              title="Review Pr"
               icon={Icon.MagnifyingGlass}
               shortcut={{ modifiers: ["cmd", "shift"], key: "r" }}
               onAction={async () => {
@@ -461,7 +480,8 @@ export function TaskDetail({
                   title: "Starting PR review...",
                 });
                 try {
-                  const skillOpts = await getSkillOptionsForCommand("review-pr");
+                  const skillOpts =
+                    await getSkillOptionsForCommand("review-pr");
                   const reviewTask = await launchTask(
                     "review-pr",
                     task.dir,
@@ -567,11 +587,17 @@ export function ReviewReportDetail({
     const confirmed = await confirmAlert({
       title: `${MERGE_METHOD_LABELS[method]} PR #${prNumber}?`,
       message: navigationTitle,
-      primaryAction: { title: MERGE_METHOD_LABELS[method], style: Alert.ActionStyle.Default },
+      primaryAction: {
+        title: MERGE_METHOD_LABELS[method],
+        style: Alert.ActionStyle.Default,
+      },
       dismissAction: { title: "Cancel" },
     });
     if (!confirmed) return;
-    const toast = await showToast({ style: Toast.Style.Animated, title: "Merging PR..." });
+    const toast = await showToast({
+      style: Toast.Style.Animated,
+      title: "Merging PR...",
+    });
     try {
       await execGhAsync(["pr", "merge", prNumber, method], dirPath);
       toast.style = Toast.Style.Success;
@@ -592,7 +618,10 @@ export function ReviewReportDetail({
       dismissAction: { title: "Cancel" },
     });
     if (!confirmed) return;
-    const toast = await showToast({ style: Toast.Style.Animated, title: "Closing PR..." });
+    const toast = await showToast({
+      style: Toast.Style.Animated,
+      title: "Closing PR...",
+    });
     try {
       await execGhAsync(["pr", "close", prNumber], dirPath);
       toast.style = Toast.Style.Success;
@@ -615,7 +644,7 @@ export function ReviewReportDetail({
             icon={Icon.Window}
             onAction={() => void handleCloseMainWindow()}
           />
-          <Action.CopyToClipboard title="Copy PR Link" content={gitUrl} />
+          <Action.CopyToClipboard title="Copy Pr Link" content={gitUrl} />
           <Action
             title="Open in Browser"
             icon={Icon.Globe}
@@ -657,7 +686,7 @@ export function ReviewReportDetail({
                 />
               </ActionPanel.Submenu>
               <Action
-                title="Close PR"
+                title="Close Pr"
                 icon={Icon.XMarkCircle}
                 style={Action.Style.Destructive}
                 shortcut={{ modifiers: ["cmd"], key: "n" }}

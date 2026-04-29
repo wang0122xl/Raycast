@@ -90,7 +90,7 @@ function BranchPicker({
             actions={
               <ActionPanel>
                 <Action
-                  title="Create PR"
+                  title="Create Pr"
                   onAction={() => handleSelect(searchText)}
                 />
                 <Action
@@ -116,7 +116,7 @@ function BranchPicker({
               actions={
                 <ActionPanel>
                   <Action
-                    title="Create PR"
+                    title="Create Pr"
                     onAction={() => handleSelect(branch)}
                   />
                   <Action

@@ -97,10 +97,20 @@ function buildClaudeCommand(
   }
 
   const allowedTools = [
-    "Bash(git:*)", "Bash(gh:*)",
-    "Bash(ls:*)", "Bash(cat:*)", "Bash(find:*)", "Bash(grep:*)",
-    "Bash(mkdir:*)", "Bash(cp:*)", "Bash(wc:*)",
-    "Read", "Write", "Edit", "Grep", "Glob",
+    "Bash(git:*)",
+    "Bash(gh:*)",
+    "Bash(ls:*)",
+    "Bash(cat:*)",
+    "Bash(find:*)",
+    "Bash(grep:*)",
+    "Bash(mkdir:*)",
+    "Bash(cp:*)",
+    "Bash(wc:*)",
+    "Read",
+    "Write",
+    "Edit",
+    "Grep",
+    "Glob",
   ].join(",");
 
   const parts = [

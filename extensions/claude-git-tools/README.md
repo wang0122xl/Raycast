@@ -95,6 +95,19 @@ The extension extracts URLs from Claude's output for clickable `terminal-notifie
 
 Supported platforms: GitHub, GitLab, Bitbucket. SSH remotes are auto-converted to HTTPS.
 
+### Required Output: Review Report (review-pr only)
+
+For the Review PR command, the extension extracts a report preview from Claude's output using the `!--------!` delimiter. The skill must wrap the final review report between two `!--------!` markers. Content between the markers is displayed in the task detail panel as a formatted report preview.
+
+Without the delimiters, the review output still displays as raw streaming text, but the structured report preview will not be available.
+
+```
+!--------!
+## Review Summary
+...report content...
+!--------!
+```
+
 ### Example: create-pr skill
 
 ```markdown
@@ -110,6 +123,16 @@ Steps:
 3. Create PR via `gh pr create`
 4. Output the PR URL (e.g. https://github.com/owner/repo/pull/123)
 ```
+
+## Screenshots
+
+| Git Push | Create PR | Review PR |
+|----------|-----------|-----------|
+| ![Git Push](media/git_push.png) | ![Create PR](media/create_pr.png) | ![Review PR](media/review_pr.png) |
+
+| Manage Folders & Skills | Task Detail |
+|------------------------|-------------|
+| ![Manage Folders](media/manage_folders.png) | ![Task Detail](media/task_detail.png) |
 
 ## Development
 
