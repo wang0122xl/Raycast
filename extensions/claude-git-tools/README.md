@@ -1,72 +1,62 @@
+[English](README.md) | [中文](README.zh-CN.md)
+
 # Claude Git Tools
 
-A Raycast extension that turns everyday git operations into one-click workflows powered by Claude Code CLI. Pick a repo, choose a command, and let Claude handle staging, committing, pushing, creating PRs, and reviewing code — all without leaving Raycast.
+Raycast extension for git automation via Claude Code CLI. Spawns background Claude processes to handle git-push, create-pr, and review-pr, streaming formatted output back to Raycast.
 
 ## Requirements
 
 | Dependency | Required | Description |
 |-----------|----------|-------------|
-| [Raycast](https://raycast.com) | Yes | macOS launcher, hosts the extension |
-| [Node.js](https://nodejs.org) + npm | Yes | Build and run the extension |
-| `git` | Yes | Version control operations |
+| [Raycast](https://raycast.com) | Yes | Hosts the extension |
+| [Node.js](https://nodejs.org) + npm | Yes | Build the extension |
+| `git` | Yes | Version control |
 | [`claude`](https://docs.anthropic.com/en/docs/claude-code) | Yes | Claude Code CLI, must support `--output-format stream-json` |
-| [`gh`](https://cli.github.com) | Recommended | GitHub CLI — required for Create PR and Review PR commands |
-| [`terminal-notifier`](https://github.com/julienXX/terminal-notifier) | Optional | macOS notifications when tasks complete |
+| [`gh`](https://cli.github.com) | Recommended | Create PR and Review PR commands depend on it |
+| [`terminal-notifier`](https://github.com/julienXX/terminal-notifier) | Optional | macOS notifications on task completion, with clickable PR/commit links |
 
-All CLI tools must be available in PATH.
+All CLI tools must be in PATH.
 
 ## Getting Started
 
-### 1. Install the Extension
+### 1. Install
 
 ```bash
 cd extensions/claude-git-tools
 npm install
-npm run dev    # opens Raycast dev environment
+npm run dev
 ```
 
-### 2. Configure Scan Folders
+### 2. Manage Folders & Skills
 
-Open Raycast and run **Manage Folders & Skills**:
+Run **Manage Folders & Skills** in Raycast:
 
-- Press Enter on "Add Folder" to select a parent directory containing your git repos (e.g. `~/git`)
-- The extension scans up to 3 levels deep for `.git` directories
-- Add multiple folders if your repos are spread across different locations
+- **Folders**: Add parent directories containing git repos (e.g. `~/git`). The extension scans up to 3 levels deep for `.git`.
+- **Skills**: Optionally bind a `.md` skill file to each command (Git Push / Create PR / Review PR) as a system prompt. Without a skill file, the extension falls back to built-in slash commands (`/git-push-changes`, `/create-pr`, `/pr-review`).
 
-### 3. Configure Skill Files (Optional)
-
-In the same **Manage Folders & Skills** panel, the "Skills" section lists each command (Git Push, Create PR, Review PR). You can bind a `.md` skill file to each command as a system prompt, giving fine-grained control over Claude's behavior.
-
-If no skill file is configured, the extension falls back to built-in slash commands (`/git-push-changes`, `/create-pr`, `/pr-review`).
-
-### 4. Run a Command
+### 3. Run a Command
 
 | Command | Flow |
 |---------|------|
-| **Git Push** | Select repo → Claude stages, commits, and pushes → Task detail panel |
-| **Create PR** | Select repo → Select/type target branch → Claude creates PR → Task detail panel |
-| **Review PR** | Select repo → PR list (open + closed) → Select PR to review → Task detail panel |
+| **Git Push** | Select repo → Task detail panel (Claude stages, commits, pushes) |
+| **Create PR** | Select repo → Type or select target branch → Task detail panel (Claude creates PR) |
+| **Review PR** | Select repo → PR list → Select a PR → Task detail panel (Claude reviews) |
 
-Each command launches a background Claude process. The **Task detail panel** streams real-time output as formatted markdown. Tasks survive Raycast window closure.
+Tasks run as detached background processes. The task detail panel streams real-time output. Closing Raycast does not interrupt running tasks.
 
-### 5. Monitor Tasks
+### 4. View Tasks / Manage Model
 
-Run **View Tasks** to see all running and completed tasks. Click any task to view its output, extracted PR/commit URLs, and status.
-
-### 6. Select Model
-
-Run **Manage Model** to switch between Claude models (Haiku / Sonnet / Opus).
+- **View Tasks** — list all running and completed tasks, click to view output and extracted URLs
+- **Manage Model** — switch between Haiku / Sonnet / Opus
 
 ## Claude CLI Permissions
 
-The extension invokes `claude` with `--allowedTools` to pre-approve only the tools needed for git operations, avoiding interactive permission prompts in the background process.
-
-### Allowed Tools
+The extension invokes `claude` with `--allowedTools` to pre-approve specific tools, avoiding interactive prompts in the background process.
 
 | Tool | Reason |
 |------|--------|
 | `Bash(git:*)` | All git operations — add, commit, push, diff, log, branch, merge, rebase, etc. |
-| `Bash(gh:*)` | GitHub CLI — create PRs (`gh pr create`), list/review/merge/close PRs |
+| `Bash(gh:*)` | GitHub CLI — `gh pr create`, `gh pr list`, `gh pr merge`, `gh pr close`, etc. |
 | `Bash(ls:*)` | List directory contents to explore repo structure |
 | `Bash(cat:*)` | Read file contents for diff context and commit message generation |
 | `Bash(find:*)` | Discover files and directories within the repo |
@@ -74,37 +64,37 @@ The extension invokes `claude` with `--allowedTools` to pre-approve only the too
 | `Bash(mkdir:*)` | Create directories when needed by git operations |
 | `Bash(cp:*)` | Copy files during branch or merge operations |
 | `Bash(wc:*)` | Count lines/words for change summary statistics |
-| `Read` | Claude's built-in file reading tool |
-| `Write` | Claude's built-in file writing tool |
-| `Edit` | Claude's built-in file editing tool |
-| `Grep` | Claude's built-in content search tool |
-| `Glob` | Claude's built-in file pattern matching tool |
+| `Read` | Claude built-in file reading |
+| `Write` | Claude built-in file writing |
+| `Edit` | Claude built-in file editing |
+| `Grep` | Claude built-in content search |
+| `Glob` | Claude built-in file pattern matching |
 
 ## Skill File Format
 
-When using custom skill files (`.md`) instead of built-in slash commands, the extension passes user input via `$ARGUMENTS=<value>` in the prompt. Skills must handle this input and produce specific output for the extension to work correctly.
+Custom skill files (`.md`) receive user input via `$ARGUMENTS=<value>`. Skills must handle this input and produce specific output for notifications and in-app links to work.
 
-### Argument Format
+### Arguments
 
-| Command | `$ARGUMENTS` value | Description |
-|---------|-------------------|-------------|
-| **git-push** | _(none)_ | No arguments. Prompt is a fixed instruction. |
-| **create-pr** | `<branch>` | Target branch entered by the user. Supports two formats: single branch (`main`) or space-separated source and target (`dev main`). The skill should parse this as `{branchFrom} {branchTo}` when two values are present, or treat a single value as the target branch. |
-| **review-pr** | `<pr-url>` | Full GitHub PR URL (e.g. `https://github.com/owner/repo/pull/123`). |
+| Command | `$ARGUMENTS` | Format |
+|---------|-------------|--------|
+| **git-push** | _(none)_ | Fixed instruction, no arguments |
+| **create-pr** | `<branch>` | Single branch (`main`) = target branch; space-separated (`dev main`) = `{branchFrom} {branchTo}` |
+| **review-pr** | `<pr-url>` | Full PR URL, e.g. `https://github.com/owner/repo/pull/123` |
 
-The branch input in Create PR comes from the branch picker UI, where users can type a new branch or select from history. The raw text is passed directly as `$ARGUMENTS`.
+The branch input comes from the branch picker UI (type new or select from history), passed directly as `$ARGUMENTS`.
 
 ### Required Output: Git URLs
 
-The extension extracts URLs from Claude's output to enable clickable notifications (via `terminal-notifier`) and in-app link actions. If the skill does not output the expected URL, the notification will still fire but without a clickable link.
+The extension extracts URLs from Claude's output for clickable `terminal-notifier` notifications and in-app link actions. Missing URLs = notification fires without a clickable link.
 
-| Command | Expected URL in output | Example |
-|---------|----------------------|---------|
+| Command | Expected URL | Example |
+|---------|-------------|---------|
 | **git-push** | Commit URL | `https://github.com/owner/repo/commit/abc1234` |
-| **create-pr** | Pull request URL | `https://github.com/owner/repo/pull/42` |
-| **review-pr** | Pull request URL | `https://github.com/owner/repo/pull/42` |
+| **create-pr** | PR URL | `https://github.com/owner/repo/pull/42` |
+| **review-pr** | PR URL | `https://github.com/owner/repo/pull/42` |
 
-Supported hosting platforms: GitHub, GitLab, Bitbucket. SSH remote URLs (`git@github.com:...`) are automatically converted to HTTPS.
+Supported platforms: GitHub, GitLab, Bitbucket. SSH remotes are auto-converted to HTTPS.
 
 ### Example: create-pr skill
 
@@ -112,26 +102,15 @@ Supported hosting platforms: GitHub, GitLab, Bitbucket. SSH remote URLs (`git@gi
 Create a pull request.
 
 Parse `$ARGUMENTS` as branch input:
-- If two values separated by space (e.g. `dev main`): first is source branch, second is target branch
-- If single value (e.g. `main`): use current branch as source, the value as target branch
+- Two values separated by space (e.g. `dev main`): source branch + target branch
+- Single value (e.g. `main`): current branch as source, the value as target
 
 Steps:
-1. Stage and commit any uncommitted changes
-2. Push the source branch to remote
-3. Create a PR from source to target using `gh pr create`
+1. Stage and commit uncommitted changes
+2. Push source branch to remote
+3. Create PR via `gh pr create`
 4. Output the PR URL (e.g. https://github.com/owner/repo/pull/123)
 ```
-
-## Commands
-
-| Command | Description |
-|---------|-------------|
-| **Git Push** | Stage, commit, and push changes via Claude |
-| **Create PR** | Create a pull request with AI-generated description and branch picker |
-| **Review PR** | Review open PRs with Claude, then merge/close from Raycast |
-| **View Tasks** | Monitor running and completed tasks with real-time output |
-| **Manage Folders & Skills** | Configure repo scan folders and attach skill files per command |
-| **Manage Model** | Switch between Claude models (Haiku / Sonnet / Opus) |
 
 ## Development
 

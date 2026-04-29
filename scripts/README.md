@@ -1,3 +1,5 @@
+[English](README.md) | [中文](README.zh-CN.md)
+
 # Scripts
 
 Raycast Script Commands for quick git operations powered by Claude Code CLI. These are lightweight shell scripts that run as [Raycast Script Commands](https://github.com/raycast/script-commands) — no extension build required.

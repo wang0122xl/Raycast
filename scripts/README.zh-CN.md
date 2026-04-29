@@ -1,3 +1,5 @@
+[English](README.md) | [中文](README.zh-CN.md)
+
 # 脚本
 
 基于 Claude Code CLI 的 Raycast 脚本命令，用于快速执行 git 操作。这些是轻量级 shell 脚本，作为 [Raycast Script Commands](https://github.com/raycast/script-commands) 运行，无需构建扩展。

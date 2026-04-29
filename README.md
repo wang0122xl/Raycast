@@ -1,6 +1,6 @@
-# Claude Git Tools for Raycast
+[English](README.md) | [中文](README.zh-CN.md)
 
-[中文版](README.zh-CN.md)
+# Claude Git Tools for Raycast
 
 A Raycast extension that turns everyday git operations into one-click workflows powered by Claude Code. Pick a repo, choose a command, and let Claude handle the rest — committing, pushing, creating PRs, and reviewing code — all without leaving Raycast.
 
