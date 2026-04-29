@@ -220,7 +220,6 @@ export function TaskDetail({
   const [hasAutoNavigated, setHasAutoNavigated] = useState(false);
   const [prOpen, setPrOpen] = useState(false);
 
-
   const isReviewPr = task.command === "review-pr" && !!task.prUrl;
 
   const checkReviewPrState = useCallback(async () => {

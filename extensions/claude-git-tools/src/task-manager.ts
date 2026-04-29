@@ -682,11 +682,11 @@ if [ $EXIT_CODE -eq 0 ]; then
       REMOTE_BASE=""
       case "$REMOTE_URL" in
         https://*)
-          REMOTE_BASE=$(echo "$REMOTE_URL" | sed 's/\.git$//' | grep -oE '^https://[^/]+/[^/]+/[^/]+')
+          REMOTE_BASE=$(echo "$REMOTE_URL" | sed 's/\\.git$//' | grep -oE '^https://[^/]+/[^/]+/[^/]+')
           ;;
         git@*)
           REMOTE_HOST=$(echo "$REMOTE_URL" | sed 's/^git@//' | cut -d: -f1)
-          REMOTE_PATH=$(echo "$REMOTE_URL" | cut -d: -f2 | sed 's/\.git$//')
+          REMOTE_PATH=$(echo "$REMOTE_URL" | cut -d: -f2 | sed 's/\\.git$//')
           REMOTE_BASE="https://$REMOTE_HOST/$REMOTE_PATH"
           ;;
       esac

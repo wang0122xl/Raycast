@@ -19,12 +19,7 @@ import {
   readTaskOutput,
   stopTask,
 } from "./task-manager";
-import {
-  extractGitUrl,
-  extractReviewReport,
-  ReviewReportDetail,
-  TaskDetail,
-} from "./task-detail";
+import { extractGitUrl, extractReviewReport, TaskDetail } from "./task-detail";
 
 function getTaskIcon(status: Task["status"]) {
   switch (status) {
