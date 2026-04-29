@@ -80,6 +80,48 @@ npm run dev    # 打开 Raycast 开发环境
 | `Grep` | Claude 内置内容搜索工具 |
 | `Glob` | Claude 内置文件模式匹配工具 |
 
+## Skill 文件格式
+
+使用自定义 skill 文件（`.md`）替代内置 slash 命令时，扩展通过 `$ARGUMENTS=<value>` 将用户输入传递给 Claude。Skill 必须正确处理该输入并产出特定格式的输出，否则会影响使用体验。
+
+### 参数格式
+
+| 命令 | `$ARGUMENTS` 值 | 说明 |
+|------|-----------------|------|
+| **git-push** | _（无）_ | 无参数，提示词为固定指令 |
+| **create-pr** | `<branch>` | 用户输入的目标分支。支持两种格式：单分支（`main`）或空格分隔的源和目标分支（`dev main`）。Skill 应在两个值时解析为 `{branchFrom} {branchTo}`，单个值时作为目标分支 |
+| **review-pr** | `<pr-url>` | 完整的 GitHub PR URL（如 `https://github.com/owner/repo/pull/123`） |
+
+Create PR 的分支输入来自分支选择器 UI，用户可以输入新分支或从历史记录中选择。原始文本直接作为 `$ARGUMENTS` 传递。
+
+### 必需输出：Git URL
+
+扩展从 Claude 输出中提取 URL，用于可点击的通知跳转（通过 `terminal-notifier`）和应用内链接操作。如果 skill 未输出预期的 URL，通知仍会触发但无法点击跳转。
+
+| 命令 | 输出中需包含的 URL | 示例 |
+|------|-------------------|------|
+| **git-push** | Commit URL | `https://github.com/owner/repo/commit/abc1234` |
+| **create-pr** | Pull Request URL | `https://github.com/owner/repo/pull/42` |
+| **review-pr** | Pull Request URL | `https://github.com/owner/repo/pull/42` |
+
+支持的托管平台：GitHub、GitLab、Bitbucket。SSH 远程地址（`git@github.com:...`）会自动转换为 HTTPS。
+
+### 示例：create-pr skill
+
+```markdown
+创建 Pull Request。
+
+解析 `$ARGUMENTS` 作为分支输入：
+- 如果是空格分隔的两个值（如 `dev main`）：第一个为源分支，第二个为目标分支
+- 如果是单个值（如 `main`）：以当前分支为源，该值为目标分支
+
+步骤：
+1. 暂存并提交未提交的更改
+2. 推送源分支到远程
+3. 使用 `gh pr create` 从源分支向目标分支创建 PR
+4. 输出 PR URL（如 https://github.com/owner/repo/pull/123）
+```
+
 ## 命令
 
 | 命令 | 说明 |
