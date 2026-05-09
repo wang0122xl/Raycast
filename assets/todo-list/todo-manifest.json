@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "activeEventFile": "todo-events-000001.ndjson",
+  "nextEventIndex": 2,
+  "maxEventFileBytes": 5242880,
+  "migratedFromLegacyJson": true
+}
