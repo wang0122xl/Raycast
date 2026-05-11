@@ -24,14 +24,14 @@
     },
     {
       "name": "manage-folders",
-      "title": "Manage Folders & Skills",
-      "description": "Manage folders and skill files for git commands",
+      "title": "Manage Folders&Skills&Agents",
+      "description": "Manage folders, skill files, and agents for git commands",
       "mode": "view"
     },
     {
       "name": "manage-model",
-      "title": "Manage Model",
-      "description": "Select the Claude model to use (haiku, sonnet, opus)",
+      "title": "Manage Models",
+      "description": "Select Claude, Codex, and Gemini models",
       "mode": "view"
     },
     {

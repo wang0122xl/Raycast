@@ -5,10 +5,25 @@ const DIR_HISTORY_KEY = "dir-history";
 const BRANCH_HISTORY_PREFIX = "branch-history:";
 const TASKS_KEY = "tasks";
 const MODEL_KEY = "selected-model";
+const CODEX_MODEL_KEY = "selected-codex-model";
+const GEMINI_MODEL_KEY = "selected-gemini-model";
+const AGENT_KEY = "selected-agent";
 const SKILL_PREFIX = "skill-";
 
 export type ClaudeModel = "haiku" | "sonnet" | "opus";
 export const DEFAULT_MODEL: ClaudeModel = "sonnet";
+
+export type CodexModel = "gpt-5.5" | "gpt-5.4" | "gpt-5.3-codex";
+export const DEFAULT_CODEX_MODEL: CodexModel = "gpt-5.5";
+
+export type GeminiModel =
+  | "gemini-3.1-pro-preview"
+  | "gemini-3-flash-preview"
+  | "gemini-3.1-flash-lite-preview";
+export const DEFAULT_GEMINI_MODEL: GeminiModel = "gemini-3.1-pro-preview";
+
+export type Agent = "claude" | "codex" | "opencode" | "gemini";
+export const DEFAULT_AGENT: Agent = "claude";
 
 export interface Task {
   id: string;
@@ -22,6 +37,7 @@ export interface Task {
   outputFile: string;
   pidFile: string;
   exitCodeFile?: string;
+  agent?: Agent;
   startTime: number;
 }
 
@@ -127,6 +143,51 @@ export async function getModel(): Promise<ClaudeModel> {
 
 export async function setModel(model: ClaudeModel) {
   await LocalStorage.setItem(MODEL_KEY, model);
+}
+
+export async function getCodexModel(): Promise<CodexModel> {
+  const raw = await LocalStorage.getItem<string>(CODEX_MODEL_KEY);
+  if (raw === "gpt-5.5" || raw === "gpt-5.4" || raw === "gpt-5.3-codex") {
+    return raw;
+  }
+  return DEFAULT_CODEX_MODEL;
+}
+
+export async function setCodexModel(model: CodexModel) {
+  await LocalStorage.setItem(CODEX_MODEL_KEY, model);
+}
+
+export async function getGeminiModel(): Promise<GeminiModel> {
+  const raw = await LocalStorage.getItem<string>(GEMINI_MODEL_KEY);
+  if (
+    raw === "gemini-3.1-pro-preview" ||
+    raw === "gemini-3-flash-preview" ||
+    raw === "gemini-3.1-flash-lite-preview"
+  ) {
+    return raw;
+  }
+  return DEFAULT_GEMINI_MODEL;
+}
+
+export async function setGeminiModel(model: GeminiModel) {
+  await LocalStorage.setItem(GEMINI_MODEL_KEY, model);
+}
+
+export async function getAgent(): Promise<Agent> {
+  const raw = await LocalStorage.getItem<string>(AGENT_KEY);
+  if (
+    raw === "claude" ||
+    raw === "codex" ||
+    raw === "opencode" ||
+    raw === "gemini"
+  ) {
+    return raw;
+  }
+  return DEFAULT_AGENT;
+}
+
+export async function setAgent(agent: Agent) {
+  await LocalStorage.setItem(AGENT_KEY, agent);
 }
 
 export type SkillCommand = "git-push" | "create-pr" | "review-pr";

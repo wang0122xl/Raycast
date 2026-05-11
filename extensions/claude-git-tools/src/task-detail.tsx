@@ -47,6 +47,39 @@ const REFRESH_INTERVAL_MS = 1000;
 const LATEST_OUTPUT_LINE_LIMIT = 6;
 const EMPTY_OUTPUT_TEXT = "(waiting for output...)";
 const REVIEW_REPORT_DELIMITER = "!--------!";
+const CREATE_PR_FINAL_RESPONSE_START = "CREATE_PR_FINAL_RESPONSE_BEGIN";
+const CREATE_PR_FINAL_RESPONSE_END = "CREATE_PR_FINAL_RESPONSE_END";
+
+function extractLastMatch(text: string, pattern: RegExp): string | null {
+  const matches = [...text.matchAll(pattern)];
+  return matches.length > 0 ? matches[matches.length - 1][0] : null;
+}
+
+function extractCreatePrFinalUrl(output: string): string | null {
+  const blockPattern = new RegExp(
+    `${CREATE_PR_FINAL_RESPONSE_START}([\\s\\S]*?)${CREATE_PR_FINAL_RESPONSE_END}`,
+    "g",
+  );
+  const blocks = [...output.matchAll(blockPattern)];
+  for (const block of blocks.reverse()) {
+    const content = block[1] || "";
+    const url =
+      extractLastMatch(
+        content,
+        /https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/[0-9]+/g,
+      ) ||
+      extractLastMatch(
+        content,
+        /https:\/\/gitlab\.com\/[^\s<>")']+\/-\/merge_requests\/[0-9]+/g,
+      ) ||
+      extractLastMatch(
+        content,
+        /https:\/\/bitbucket\.org\/[^\s<>")']+\/pull-requests\/[0-9]+/g,
+      );
+    if (url) return url;
+  }
+  return null;
+}
 
 export function extractReviewReport(output: string): string | null {
   const startIdx = output.indexOf(REVIEW_REPORT_DELIMITER);
@@ -55,7 +88,24 @@ export function extractReviewReport(output: string): string | null {
   const endIdx = output.indexOf(REVIEW_REPORT_DELIMITER, contentStart);
   if (endIdx === -1) return null;
   const content = output.slice(contentStart, endIdx).trim();
+  if (!content.includes("# PR 审查报告")) return null;
   return content || null;
+}
+
+export function fallbackReviewReport(task: Task): string | null {
+  if (task.command !== "review-pr" || !task.prUrl) return null;
+  return [
+    "# PR 审查报告",
+    "",
+    "## 总结",
+    "",
+    "任务已完成，但 agent 没有返回可解析的 `!--------!` 报告块。",
+    "请以 PR 页面中的最新审查评论为准。",
+    "",
+    "**结论**: 已审查",
+    "",
+    `PR: ${task.prUrl}`,
+  ].join("\n");
 }
 
 function getStatusLabel(status: Task["status"]): string {
@@ -101,7 +151,28 @@ function formatDiffBlock(text: string): string {
 export function extractGitUrl(task: Task, output: string): string | null {
   let url: string | null = null;
 
-  if (task.command === "create-pr" || task.command === "review-pr") {
+  if (task.command === "review-pr" && task.prUrl) {
+    url = task.prUrl;
+  }
+
+  if (task.command === "create-pr") {
+    url =
+      extractCreatePrFinalUrl(output) ||
+      extractLastMatch(
+        output,
+        /https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/[0-9]+/g,
+      ) ||
+      extractLastMatch(
+        output,
+        /https:\/\/gitlab\.com\/[^\s<>")']+\/-\/merge_requests\/[0-9]+/g,
+      ) ||
+      extractLastMatch(
+        output,
+        /https:\/\/bitbucket\.org\/[^\s<>")']+\/pull-requests\/[0-9]+/g,
+      );
+  }
+
+  if (task.command === "review-pr") {
     const githubMatch = output.match(
       /https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/[0-9]+/,
     );
@@ -142,7 +213,9 @@ export function extractGitUrl(task: Task, output: string): string | null {
       const gitHostMatch = output.match(
         /https:\/\/(github\.com|gitlab\.com|bitbucket\.org)\/[^\s<>")']+/g,
       );
-      if (gitHostMatch) url = gitHostMatch[0].replace(/[.,;:)']*$/, "");
+      if (gitHostMatch) {
+        url = gitHostMatch[gitHostMatch.length - 1].replace(/[.,;:)']*$/, "");
+      }
     }
 
     if (!url) {
@@ -173,7 +246,10 @@ function formatStatusLine(status: Task["status"]): string {
 
 function formatMetadataLine(task: Task): string {
   const elapsed = Math.round((Date.now() - task.startTime) / 1000);
-  const parts = [`branch: ${task.branch || "unknown"}`];
+  const parts = [
+    `agent: ${task.agent || "claude"}`,
+    `branch: ${task.branch || "unknown"}`,
+  ];
 
   if (task.targetBranch) {
     parts.push(`target: ${task.targetBranch}`);
@@ -294,7 +370,9 @@ export function TaskDetail({
 
   const running = status === "running";
   const finished = status === "completed";
-  const gitUrl = finished ? extractGitUrl(task, output) : null;
+  const latestOutput = readTaskOutput(task);
+  const displayOutput = latestOutput || output;
+  const gitUrl = finished ? extractGitUrl(task, displayOutput) : null;
 
   useEffect(() => {
     if (task.command !== "create-pr" || !gitUrl) {
@@ -380,9 +458,9 @@ export function TaskDetail({
 
   const reviewReport =
     finished && task.command === "review-pr" && task.prUrl
-      ? extractReviewReport(output)
+      ? extractReviewReport(displayOutput) || fallbackReviewReport(task)
       : null;
-  const markdown = formatTerminalMarkdown(task, status, output);
+  const markdown = formatTerminalMarkdown(task, status, displayOutput);
 
   return (
     <Detail
@@ -491,7 +569,7 @@ export function TaskDetail({
                     toast.style = Toast.Style.Failure;
                     toast.title = "No skill file configured";
                     toast.message =
-                      "Please configure one via Manage Folders & Skills";
+                      "Please configure one via Manage Folders&Skills&Agents";
                     return;
                   }
                   toast.style = Toast.Style.Success;
@@ -522,7 +600,7 @@ export function TaskDetail({
           )}
           <Action.CopyToClipboard
             title="Copy Output"
-            content={output}
+            content={displayOutput}
             shortcut={{ modifiers: ["cmd", "shift"], key: "enter" }}
           />
           <Action

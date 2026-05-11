@@ -14,6 +14,9 @@ import {
   getSkillPath,
   setSkillPath,
   removeSkillPath,
+  getAgent,
+  setAgent,
+  type Agent,
   type SkillCommand,
 } from "./storage";
 import { pickSkillFile } from "./skill-picker";
@@ -25,6 +28,13 @@ const SKILL_COMMANDS: { command: SkillCommand; label: string }[] = [
   { command: "review-pr", label: "Review PR" },
 ];
 
+const AGENTS: { value: Agent; label: string }[] = [
+  { value: "claude", label: "Claude" },
+  { value: "codex", label: "Codex" },
+  { value: "opencode", label: "OpenCode" },
+  { value: "gemini", label: "Gemini" },
+];
+
 export default function ManageFolders() {
   const [folders, setFolders] = useState<string[]>([]);
   const [skills, setSkills] = useState<Record<SkillCommand, string | null>>({
@@ -32,17 +42,20 @@ export default function ManageFolders() {
     "create-pr": null,
     "review-pr": null,
   });
+  const [agent, setSelectedAgent] = useState<Agent>("claude");
   const [isLoading, setIsLoading] = useState(true);
 
   const refresh = useCallback(async () => {
-    const [f, gp, cp, rp] = await Promise.all([
+    const [f, gp, cp, rp, selectedAgent] = await Promise.all([
       getFolders(),
       getSkillPath("git-push"),
       getSkillPath("create-pr"),
       getSkillPath("review-pr"),
+      getAgent(),
     ]);
     setFolders(f);
     setSkills({ "git-push": gp, "create-pr": cp, "review-pr": rp });
+    setSelectedAgent(selectedAgent);
     setIsLoading(false);
   }, []);
 
@@ -160,6 +173,33 @@ export default function ManageFolders() {
             />
           );
         })}
+      </List.Section>
+      <List.Section title="Agent">
+        {AGENTS.map(({ value, label }) => (
+          <List.Item
+            key={value}
+            icon={agent === value ? Icon.CheckCircle : Icon.Circle}
+            title={label}
+            accessories={[{ text: agent === value ? "Selected" : "" }]}
+            actions={
+              <ActionPanel>
+                <Action
+                  title={`Select ${label}`}
+                  icon={Icon.CheckCircle}
+                  onAction={async () => {
+                    await setAgent(value);
+                    await refresh();
+                    await showToast({
+                      style: Toast.Style.Success,
+                      title: "Agent selected",
+                      message: label,
+                    });
+                  }}
+                />
+              </ActionPanel>
+            }
+          />
+        ))}
       </List.Section>
     </List>
   );

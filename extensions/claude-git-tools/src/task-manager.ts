@@ -13,10 +13,16 @@ import { join } from "path";
 import { tmpdir, homedir } from "os";
 import {
   addTask,
+  getAgent,
+  getCodexModel,
+  getGeminiModel,
   getModel,
   getSkillPath,
   removeTask,
   updateTask,
+  type Agent,
+  type CodexModel,
+  type GeminiModel,
   type Task,
 } from "./storage";
 import { dirFromPath } from "./git-utils";
@@ -34,6 +40,7 @@ interface TaskOptions {
   prUrl?: string;
   skillName?: string;
   skillDir?: string;
+  agent?: Agent;
 }
 
 export function skillPathToName(path: string): string {
@@ -43,17 +50,21 @@ export function skillPathToName(path: string): string {
 
 export async function getSkillOptionsForCommand(
   command: TaskCommand,
-): Promise<{ skillName?: string; skillDir?: string }> {
-  const path = await getSkillPath(command);
-  if (!path) return {};
+): Promise<{ skillName?: string; skillDir?: string; agent: Agent }> {
+  const [path, agent] = await Promise.all([getSkillPath(command), getAgent()]);
+  if (!path) return { agent };
   const name = skillPathToName(path);
   const dir = dirFromPath(path);
-  return { skillName: name, skillDir: dir };
+  return { skillName: name, skillDir: dir, agent };
 }
 
 function ensureTaskDir() {
   if (!existsSync(TASK_DIR)) mkdirSync(TASK_DIR, { recursive: true });
-  if (!formatterWritten) {
+  if (
+    !formatterWritten ||
+    !existsSync(FORMATTER_FILE) ||
+    readFileSync(FORMATTER_FILE, "utf-8") !== outputFormatterScript
+  ) {
     writeFileSync(FORMATTER_FILE, outputFormatterScript);
     formatterWritten = true;
   }
@@ -71,33 +82,52 @@ function requireTargetBranch(options: TaskOptions): string {
   return targetBranch;
 }
 
+function getSkillFile(options: TaskOptions): string {
+  if (options.skillDir && options.skillName) {
+    const candidate = join(options.skillDir, `${options.skillName}.md`);
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return "";
+}
+
+function buildTaskPrompt(command: TaskCommand, options: TaskOptions): string {
+  if (command === "git-push") {
+    return "Execute the task described in the appended system prompt";
+  }
+  if (command === "create-pr") {
+    const branch = requireTargetBranch(options);
+    return `$ARGUMENTS=${branch}`;
+  }
+  const prUrl = options.prUrl || "";
+  return `$ARGUMENTS=${prUrl}`;
+}
+
+function buildTaskPromptWithSkill(
+  command: TaskCommand,
+  options: TaskOptions,
+  skillFile: string,
+): string {
+  const skillText = readFileSync(skillFile, "utf-8");
+  return [
+    "Follow the skill instructions below to complete this task. Treat them as the appended system prompt referenced by the task.",
+    "",
+    "```md",
+    skillText.replace(/```/g, "'''"),
+    "```",
+    "",
+    buildTaskPrompt(command, options),
+  ].join("\n");
+}
+
 function buildClaudeCommand(
   command: TaskCommand,
   options: TaskOptions,
   model: string,
-): string | null {
-  let skillFile = "";
-  if (options.skillDir && options.skillName) {
-    const candidate = join(options.skillDir, `${options.skillName}.md`);
-    if (existsSync(candidate)) {
-      skillFile = candidate;
-    }
-  }
-
-  if (!skillFile) {
-    return null;
-  }
-
-  let prompt: string;
-  if (command === "git-push") {
-    prompt = "Execute the task described in the appended system prompt";
-  } else if (command === "create-pr") {
-    const branch = requireTargetBranch(options);
-    prompt = `$ARGUMENTS=${branch}`;
-  } else {
-    const prUrl = options.prUrl || "";
-    prompt = `$ARGUMENTS=${prUrl}`;
-  }
+  skillFile: string,
+): string {
+  const prompt = buildTaskPrompt(command, options);
 
   const allowedTools = [
     "Bash(git:*)",
@@ -137,6 +167,49 @@ function buildClaudeCommand(
   parts.push("--", shellQuote(prompt));
 
   return parts.join(" ");
+}
+
+function buildCodexCommand(promptFile: string, model: CodexModel): string {
+  return [
+    "codex",
+    "exec",
+    "--model",
+    shellQuote(model),
+    "--json",
+    "--color",
+    "never",
+    "--dangerously-bypass-approvals-and-sandbox",
+    "-",
+    "<",
+    shellQuote(promptFile),
+  ].join(" ");
+}
+
+function buildOpenCodeCommand(promptFile: string): string {
+  return [
+    "opencode",
+    "run",
+    "--format",
+    "json",
+    "--dangerously-skip-permissions",
+    "--",
+    shellQuote(readFileSync(promptFile, "utf-8")),
+  ].join(" ");
+}
+
+function buildGeminiCommand(promptFile: string, model: GeminiModel): string {
+  return [
+    "gemini",
+    "--model",
+    shellQuote(model),
+    "--prompt",
+    shellQuote(readFileSync(promptFile, "utf-8")),
+    "--output-format",
+    "stream-json",
+    "--skip-trust",
+    "--approval-mode",
+    "yolo",
+  ].join(" ");
 }
 
 function getTaskFileId(name: string): string | null {
@@ -243,6 +316,12 @@ const readline = require("readline");
 
 const claudeToolUses = new Set();
 const claudeToolResults = new Set();
+const codexCommandStarts = new Set();
+const ansiPattern = new RegExp("\\x1B(?:[@-Z\\\\-_]|\\[[0-?]*[ -/]*[@-~])", "g");
+let attachmentBlock = null;
+let geminiPromptEcho = false;
+let geminiStackTrace = false;
+let geminiModelErrorShown = false;
 
 function asText(value) {
   if (typeof value === "string") return value;
@@ -257,6 +336,14 @@ function asText(value) {
   if (typeof value.message === "string") return value.message;
   if (value.delta) return asText(value.delta);
   if (value.result) return asText(value.result);
+  return "";
+}
+
+function firstText() {
+  for (const value of arguments) {
+    const text = asText(value);
+    if (text) return text;
+  }
   return "";
 }
 
@@ -396,12 +483,298 @@ function formatClaude(event) {
   return "";
 }
 
+function formatGenericAgent(event) {
+  if (!event || typeof event !== "object") return "";
+
+  const type = String(event.type || event.kind || event.event || "");
+  const lowerType = type.toLowerCase();
+  const payload =
+    event.item ||
+    event.part ||
+    event.tool ||
+    event.command ||
+    event.data ||
+    event.properties ||
+    event;
+
+  if (
+    lowerType.includes("error") ||
+    lowerType.includes("failed") ||
+    lowerType.includes("failure")
+  ) {
+    const text = asText(
+      event.message ||
+        event.error ||
+        event.data?.message ||
+        event.data?.error ||
+        payload,
+    );
+    return text ? "\n[error] " + text.trimEnd() + "\n" : "";
+  }
+
+  if (
+    lowerType.includes("tool") ||
+    lowerType.includes("command") ||
+    lowerType.includes("exec") ||
+    lowerType.includes("bash")
+  ) {
+    const formattedUse = formatToolUse(payload);
+    if (formattedUse) return formattedUse;
+    const formattedResult = formatToolResult(payload);
+    if (formattedResult) return formattedResult;
+  }
+
+  const text = firstText(
+    event.delta,
+    stripAttachmentBlocks(event.text || ""),
+    event.message,
+    event.content,
+    event.output,
+    event.result,
+    event.data,
+    event.data?.text,
+    event.data?.message,
+    event.data?.content,
+    event.item,
+  );
+  return text ? text : "";
+}
+
+function formatCodex(event) {
+  const type = String(event.type || "");
+
+  if (
+    type === "thread.started" ||
+    type === "turn.started" ||
+    type === "turn.completed" ||
+    type === "token_count" ||
+    type === "rate_limits"
+  ) {
+    return "";
+  }
+
+  if (type === "item.started" || type === "item.completed") {
+    return formatCodexItem(event.item, type);
+  }
+
+  return formatGenericAgent(event);
+}
+
+function isCodexNoise(text) {
+  return (
+    text.includes("[features].codex_hooks") ||
+    text.includes("Use [features].hooks instead") ||
+    text.includes("rmcp::transport::worker") ||
+    text.includes("Unexpected content type")
+  );
+}
+
+function formatCodexItem(item, eventType) {
+  if (!item || typeof item !== "object") return "";
+
+  if (item.type === "agent_message") {
+    const text = asText(item.text || item.content || item.message);
+    if (!text.trim() || isCodexNoise(text)) return "";
+    return text.trimEnd() + "\n\n";
+  }
+
+  if (item.type === "command_execution") {
+    const command = item.command || item.cmd || "";
+    const key = item.id || command;
+
+    if (eventType === "item.started") {
+      if (!command || codexCommandStarts.has(key)) return "";
+      codexCommandStarts.add(key);
+      return "\n▸ shell: " + command + "\n";
+    }
+
+    const output = asText(item.aggregated_output || item.output || item.stdout || item.stderr);
+    if (output.trim()) return output.trimEnd() + "\n";
+    if (item.exit_code && item.exit_code !== 0) {
+      return "[exit " + item.exit_code + "]\n";
+    }
+    return "";
+  }
+
+  if (item.type === "error") {
+    const text = asText(item.message || item.error || item);
+    if (!text.trim() || isCodexNoise(text)) return "";
+    return "\n[error] " + text.trimEnd() + "\n";
+  }
+
+  const text = asText(item);
+  if (!text.trim() || isCodexNoise(text)) return "";
+  return text.trimEnd() + "\n";
+}
+
+function formatOpenCode(event) {
+  const type = String(event.type || event.event || "").toLowerCase();
+  const formatted = formatGenericAgent(event);
+  if (formatted.trim()) return formatted;
+
+  if (
+    type.includes("session") ||
+    type.includes("permission") ||
+    type.includes("storage")
+  ) {
+    return "";
+  }
+  return formatGenericAgent(event);
+}
+
+function formatGemini(event) {
+  const type = String(event.type || event.kind || event.event || "").toLowerCase();
+  const role = String(event.role || "").toLowerCase();
+
+  if (
+    type === "init" ||
+    (type === "message" && role === "user") ||
+    (type === "result" && event.status === "success")
+  ) {
+    return "";
+  }
+
+  if (
+    type.includes("usage") ||
+    type.includes("token") ||
+    type.includes("metadata") ||
+    type.includes("stats")
+  ) {
+    return "";
+  }
+
+  if (
+    type.includes("tool") ||
+    type.includes("function") ||
+    type.includes("command") ||
+    type.includes("exec")
+  ) {
+    const payload =
+      event.tool ||
+      event.functionCall ||
+      event.function_call ||
+      event.call ||
+      event.data ||
+      event;
+    const formattedUse = formatToolUse(payload);
+    if (formattedUse) return formattedUse;
+    const formattedResult = formatToolResult(payload);
+    if (formattedResult) return formattedResult;
+  }
+
+  return formatGenericAgent(event);
+}
+
+function formatGeminiPlainLine(line) {
+  const trimmed = line.trim();
+
+  if (!trimmed && geminiPromptEcho) return "";
+
+  if (
+    trimmed === "Warning: 256-color support not detected. Using a terminal with at least 256-color support is recommended for a better visual experience." ||
+    trimmed === "YOLO mode is enabled. All tool calls will be automatically approved." ||
+    trimmed === "Ripgrep is not available. Falling back to GrepTool." ||
+    (trimmed.startsWith("Skill ") && trimmed.includes(" is overriding "))
+  ) {
+    return "";
+  }
+
+  if (trimmed.startsWith("Follow the skill instructions below to complete this task.")) {
+    geminiPromptEcho = true;
+    return "";
+  }
+
+  if (geminiPromptEcho) {
+    if (
+      trimmed.startsWith("Execute the task described in the appended system prompt") ||
+      trimmed.startsWith("$ARGUMENTS=")
+    ) {
+      geminiPromptEcho = false;
+    }
+    return "";
+  }
+
+  if (trimmed.startsWith("Error when talking to Gemini API")) {
+    geminiStackTrace = true;
+    if (
+      trimmed.includes("ModelNotFoundError") ||
+      trimmed.includes("Requested entity was not found")
+    ) {
+      if (geminiModelErrorShown) return "";
+      geminiModelErrorShown = true;
+      const model = process.env.AGENT_MODEL || "selected Gemini model";
+      return "\n[error] Gemini model not found (404): " + model + ". Select another Gemini model in Manage Models.\n";
+    }
+    return "\n[error] Gemini API request failed.\n";
+  }
+
+  if (
+    trimmed.includes("ModelNotFoundError") ||
+    trimmed.includes("Requested entity was not found")
+  ) {
+    geminiStackTrace = true;
+    if (geminiModelErrorShown) return "";
+    geminiModelErrorShown = true;
+    const model = process.env.AGENT_MODEL || "selected Gemini model";
+    return "[error] Gemini model not found (404): " + model + ". Select another Gemini model in Manage Models.\n";
+  }
+
+  if (geminiStackTrace) {
+    if (
+      trimmed === "}" ||
+      trimmed.startsWith("at ") ||
+      trimmed.startsWith("code:") ||
+      /^at\s+/.test(trimmed) ||
+      /^[A-Za-z]+Error:/.test(trimmed)
+    ) {
+      if (trimmed === "}") geminiStackTrace = false;
+      return "";
+    }
+  }
+
+  return stripAttachmentBlocks(line) + "\n";
+}
+
 function formatLine(line) {
   try {
-    return formatClaude(JSON.parse(line));
+    const event = JSON.parse(line);
+    if (process.env.AGENT === "codex") return formatCodex(event);
+    if (process.env.AGENT === "opencode") return formatOpenCode(event);
+    if (process.env.AGENT === "gemini") return formatGemini(event);
+    return formatClaude(event);
   } catch {
-    return line + "\n";
+    const cleaned = line.replace(ansiPattern, "");
+    if (process.env.AGENT === "codex" && isCodexNoise(cleaned)) return "";
+    if (process.env.AGENT === "gemini") return formatGeminiPlainLine(cleaned);
+    if (
+      process.env.AGENT === "codex" &&
+      cleaned.trim() === "Reading additional input from stdin..."
+    ) {
+      return "";
+    }
+    return stripAttachmentBlocks(cleaned) + "\n";
   }
+}
+
+function stripAttachmentBlocks(output) {
+  return output
+    .split("\n")
+    .filter((line) => {
+      const trimmed = line.trim();
+      if (attachmentBlock) {
+        if (trimmed === "</" + attachmentBlock + ">") {
+          attachmentBlock = null;
+        }
+        return false;
+      }
+      const start = trimmed.match(/^<(skill_content|skill_files|content|path|type|file)(\\s|>)/);
+      if (start) {
+        attachmentBlock = start[1];
+        return false;
+      }
+      return true;
+    })
+    .join("\n");
 }
 
 const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
@@ -422,7 +795,12 @@ export function readTaskOutput(task: Task): string {
 }
 
 function cleanTaskOutput(output: string): string {
-  return output
+  const ansiPattern = new RegExp(
+    `${String.fromCharCode(27)}(?:[@-Z\\\\-_]|\\[[0-?]*[ -/]*[@-~])`,
+    "g",
+  );
+
+  return cleanAgentOutput(output.replace(ansiPattern, ""))
     .replace(/\u2029/g, "")
     .split("\n")
     .filter(
@@ -435,6 +813,98 @@ function cleanTaskOutput(output: string): string {
     .join("\n")
     .replace(/\n{3,}/g, "\n\n")
     .trimStart();
+}
+
+function cleanAgentOutput(output: string): string {
+  let suppressGeminiPromptEcho = false;
+  let suppressGeminiStackTrace = false;
+  let geminiModelErrorShown = false;
+  const lines: string[] = [];
+
+  for (const line of output.split("\n")) {
+    const trimmed = line.trim();
+
+    if (
+      trimmed ===
+        "Warning: 256-color support not detected. Using a terminal with at least 256-color support is recommended for a better visual experience." ||
+      trimmed ===
+        "YOLO mode is enabled. All tool calls will be automatically approved." ||
+      trimmed === "Ripgrep is not available. Falling back to GrepTool." ||
+      (trimmed.startsWith("Skill ") && trimmed.includes(" is overriding "))
+    ) {
+      continue;
+    }
+
+    if (
+      trimmed.startsWith(
+        "Follow the skill instructions below to complete this task.",
+      )
+    ) {
+      suppressGeminiPromptEcho = true;
+      continue;
+    }
+
+    if (suppressGeminiPromptEcho) {
+      if (
+        trimmed.startsWith(
+          "Execute the task described in the appended system prompt",
+        ) ||
+        trimmed.startsWith("$ARGUMENTS=")
+      ) {
+        suppressGeminiPromptEcho = false;
+      }
+      continue;
+    }
+
+    if (trimmed.startsWith("Error when talking to Gemini API")) {
+      suppressGeminiStackTrace = true;
+      if (
+        trimmed.includes("ModelNotFoundError") ||
+        trimmed.includes("Requested entity was not found")
+      ) {
+        if (!geminiModelErrorShown) {
+          lines.push(
+            "[error] Gemini model not found (404). Select another Gemini model in Manage Models.",
+          );
+          geminiModelErrorShown = true;
+        }
+      } else {
+        lines.push("[error] Gemini API request failed.");
+      }
+      continue;
+    }
+
+    if (
+      trimmed.includes("ModelNotFoundError") ||
+      trimmed.includes("Requested entity was not found")
+    ) {
+      suppressGeminiStackTrace = true;
+      if (!geminiModelErrorShown) {
+        lines.push(
+          "[error] Gemini model not found (404). Select another Gemini model in Manage Models.",
+        );
+        geminiModelErrorShown = true;
+      }
+      continue;
+    }
+
+    if (suppressGeminiStackTrace) {
+      if (
+        trimmed === "}" ||
+        trimmed.startsWith("at ") ||
+        trimmed.startsWith("code:") ||
+        /^at\s+/.test(trimmed) ||
+        /^[A-Za-z]+Error:/.test(trimmed)
+      ) {
+        if (trimmed === "}") suppressGeminiStackTrace = false;
+        continue;
+      }
+    }
+
+    lines.push(line);
+  }
+
+  return lines.join("\n");
 }
 
 function readTaskPid(task: Task): number | null {
@@ -554,11 +1024,13 @@ export async function launchTask(
   const outputFile = join(TASK_DIR, `${id}.log`);
   const pidFile = join(TASK_DIR, `${id}.pid`);
   const exitCodeFile = join(TASK_DIR, `${id}.exit`);
+  const promptFile = join(TASK_DIR, `${id}.prompt`);
 
   writeFileSync(outputFile, "");
   writeFileSync(pidFile, "");
   writeFileSync(exitCodeFile, "");
 
+  const selectedAgent = options.agent || (await getAgent());
   const branch = getCurrentBranch(dir);
   const task: Task = {
     id,
@@ -572,23 +1044,51 @@ export async function launchTask(
     outputFile,
     pidFile,
     exitCodeFile,
+    agent: selectedAgent,
     startTime: Date.now(),
   };
   await addTask(task);
 
-  const model = await getModel();
-  const claudeCommand = buildClaudeCommand(command, options, model);
-  if (!claudeCommand) {
+  const skillFile = getSkillFile(options);
+  if (!skillFile) {
     await removeTask(task.id);
     return null;
   }
+
+  const prompt = buildTaskPromptWithSkill(command, options, skillFile);
+  writeFileSync(promptFile, prompt);
+
+  const [claudeModel, codexModel, geminiModel] = await Promise.all([
+    getModel(),
+    getCodexModel(),
+    getGeminiModel(),
+  ]);
+  const agentModel =
+    selectedAgent === "claude"
+      ? claudeModel
+      : selectedAgent === "codex"
+        ? codexModel
+        : selectedAgent === "gemini"
+          ? geminiModel
+          : "";
+  const agentCommand =
+    selectedAgent === "claude"
+      ? buildClaudeCommand(command, options, claudeModel, skillFile)
+      : selectedAgent === "codex"
+        ? buildCodexCommand(promptFile, codexModel)
+        : selectedAgent === "opencode"
+          ? buildOpenCodeCommand(promptFile)
+          : buildGeminiCommand(promptFile, geminiModel);
   const home = homedir();
 
   const script = `
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
+START_HEAD=$(git rev-parse HEAD 2>/dev/null || echo "")
 REPO_NAME=$(basename "$PWD")
 TASK_LABEL=${JSON.stringify(label)}
 TASK_COMMAND=${JSON.stringify(command)}
+TASK_AGENT=${JSON.stringify(selectedAgent)}
+TASK_PR_URL=${JSON.stringify(options.prUrl || "")}
 OUTPUT_FILE=${JSON.stringify(outputFile)}
 PID_FILE=${JSON.stringify(pidFile)}
 
@@ -641,28 +1141,53 @@ cleanup_residual_processes() {
   fi
 }
 
-${claudeCommand} 2>&1 | node ${JSON.stringify(FORMATTER_FILE)} | tee -a ${JSON.stringify(outputFile)}
+${agentCommand} 2>&1 | AGENT=${JSON.stringify(selectedAgent)} AGENT_MODEL=${JSON.stringify(agentModel)} node ${JSON.stringify(FORMATTER_FILE)} | tee -a ${JSON.stringify(outputFile)}
 EXIT_CODE=\${PIPESTATUS[0]}
-printf "%s\\n" "$EXIT_CODE" > ${JSON.stringify(exitCodeFile)}
 cleanup_residual_processes
 
 if [ $EXIT_CODE -eq 0 ]; then
   OPEN_URL=""
   if [ "$TASK_COMMAND" = "create-pr" ]; then
-    OPEN_URL=$(grep -oE 'https://github\\.com/[^/]+/[^/]+/pull/[0-9]+' "$OUTPUT_FILE" | head -1)
+    OPEN_URL=$(grep -oE 'https://github\\.com/[^/]+/[^/]+/pull/[0-9]+' "$OUTPUT_FILE" | tail -1)
     if [ -z "$OPEN_URL" ]; then
-      OPEN_URL=$(grep -oE 'https://gitlab\\.com/[^[:space:]<>")}]*/-/(merge_requests)/[0-9]+' "$OUTPUT_FILE" | head -1)
+      OPEN_URL=$(grep -oE 'https://gitlab\\.com/[^[:space:]<>")}]*/-/(merge_requests)/[0-9]+' "$OUTPUT_FILE" | tail -1)
     fi
     if [ -z "$OPEN_URL" ]; then
-      OPEN_URL=$(grep -oE 'https://bitbucket\\.org/[^[:space:]<>")}]*/pull-requests/[0-9]+' "$OUTPUT_FILE" | head -1)
+      OPEN_URL=$(grep -oE 'https://bitbucket\\.org/[^[:space:]<>")}]*/pull-requests/[0-9]+' "$OUTPUT_FILE" | tail -1)
+    fi
+    if [ -z "$OPEN_URL" ]; then
+      OPEN_URL=$(gh pr view --json url --jq .url 2>/dev/null || echo "")
+      if [ -n "$OPEN_URL" ]; then
+        printf "\\n%s\\n" "$OPEN_URL" >> "$OUTPUT_FILE"
+      fi
     fi
   elif [ "$TASK_COMMAND" = "review-pr" ]; then
-    OPEN_URL=$(grep -oE 'https://github\\.com/[^/]+/[^/]+/pull/[0-9]+' "$OUTPUT_FILE" | head -1)
-    if [ -z "$OPEN_URL" ]; then
-      OPEN_URL=$(grep -oE 'https://gitlab\\.com/[^[:space:]<>")}]*/-/(merge_requests)/[0-9]+' "$OUTPUT_FILE" | head -1)
+    if [ -n "$TASK_PR_URL" ]; then
+      OPEN_URL="$TASK_PR_URL"
+    else
+      OPEN_URL=$(grep -oE 'https://github\\.com/[^/]+/[^/]+/pull/[0-9]+' "$OUTPUT_FILE" | head -1)
+      if [ -z "$OPEN_URL" ]; then
+        OPEN_URL=$(grep -oE 'https://gitlab\\.com/[^[:space:]<>")}]*/-/(merge_requests)/[0-9]+' "$OUTPUT_FILE" | head -1)
+      fi
+      if [ -z "$OPEN_URL" ]; then
+        OPEN_URL=$(grep -oE 'https://bitbucket\\.org/[^[:space:]<>")}]*/pull-requests/[0-9]+' "$OUTPUT_FILE" | head -1)
+      fi
     fi
-    if [ -z "$OPEN_URL" ]; then
-      OPEN_URL=$(grep -oE 'https://bitbucket\\.org/[^[:space:]<>")}]*/pull-requests/[0-9]+' "$OUTPUT_FILE" | head -1)
+    if ! grep -q '!--------!' "$OUTPUT_FILE"; then
+      PR_TARGET="$TASK_PR_URL"
+      if [ -z "$PR_TARGET" ]; then
+        PR_TARGET="$OPEN_URL"
+      fi
+      if [ -n "$PR_TARGET" ]; then
+        gh pr view "$PR_TARGET" --json title,author,baseRefName,headRefName,url,additions,deletions,changedFiles --jq '"'"'
+          "!--------!\n# PR 审查报告\n\n## PR 信息\n- **标题**: " + .title +
+          "\n- **作者**: " + .author.login +
+          "\n- **基准分支**: " + .baseRefName + " <- **源分支**: " + .headRefName +
+          "\n- **变更文件数**: " + (.changedFiles | tostring) +
+          "\n- **新增**: +" + (.additions | tostring) + " / **删除**: -" + (.deletions | tostring) +
+          "\n\n## 总结\n\nAgent 已完成 PR 审查并发布评论，但没有返回完整报告块。请以 PR 评论区的最新审查评论为准。\n\n**结论**: 已审查\n\n!--------!\n\nPR: " + .url
+        '"'"' >> "$OUTPUT_FILE" 2>/dev/null || true
+      fi
     fi
   elif [ "$TASK_COMMAND" = "git-push" ]; then
     OPEN_URL=$(grep -oE 'https://(github\\.com|gitlab\\.com)/[^[:space:]<>")}]+/commit/[0-9a-f]+' "$OUTPUT_FILE" | head -1)
@@ -670,7 +1195,7 @@ if [ $EXIT_CODE -eq 0 ]; then
       OPEN_URL=$(grep -oE 'https://bitbucket\\.org/[^[:space:]<>")}]+/commits/[0-9a-f]+' "$OUTPUT_FILE" | head -1)
     fi
     if [ -z "$OPEN_URL" ]; then
-      OPEN_URL=$(grep -oE 'https://(github\\.com|gitlab\\.com|bitbucket\\.org)/[^[:space:]<>")}]+' "$OUTPUT_FILE" | head -1 | sed "s/[.,;:)']*$//")
+      OPEN_URL=$(grep -oE 'https://(github\\.com|gitlab\\.com|bitbucket\\.org)/[^[:space:]<>")}]+' "$OUTPUT_FILE" | tail -1 | sed "s/[.,;:)']*$//")
     fi
     if [ -z "$OPEN_URL" ]; then
       SSH_MATCH=$(grep -oE '(git@)?(github\\.com|gitlab\\.com|bitbucket\\.org):[^[:space:]]+' "$OUTPUT_FILE" | tail -1)
@@ -680,10 +1205,35 @@ if [ $EXIT_CODE -eq 0 ]; then
         OPEN_URL="https://$SSH_HOST/$SSH_PATH"
       fi
     fi
+    if [ -z "$OPEN_URL" ]; then
+      END_HEAD=$(git rev-parse HEAD 2>/dev/null || echo "")
+      if [ -n "$END_HEAD" ] && [ "$END_HEAD" != "$START_HEAD" ]; then
+        REMOTE_URL=$(git remote get-url origin 2>/dev/null || echo "")
+        if [ -n "$REMOTE_URL" ]; then
+          case "$REMOTE_URL" in
+            https://*)
+              REMOTE_BASE=$(echo "$REMOTE_URL" | sed 's/\\.git$//')
+              ;;
+            git@*)
+              REMOTE_HOST=$(echo "$REMOTE_URL" | sed 's/^git@//' | cut -d: -f1)
+              REMOTE_PATH=$(echo "$REMOTE_URL" | cut -d: -f2 | sed 's/\\.git$//')
+              REMOTE_BASE="https://$REMOTE_HOST/$REMOTE_PATH"
+              ;;
+            *)
+              REMOTE_BASE=""
+              ;;
+          esac
+          if [ -n "$REMOTE_BASE" ]; then
+            OPEN_URL="$REMOTE_BASE/commit/$END_HEAD"
+            printf "\\nPushed successfully.\\n\\n\\\`\\\`\\\`text\\n%s\\n\\\`\\\`\\\`\\n" "$OPEN_URL" >> "$OUTPUT_FILE"
+          fi
+        fi
+      fi
+    fi
   fi
 
   # Replace base URL in OPEN_URL with actual git remote base URL
-  if [ -n "$OPEN_URL" ]; then
+  if [ -n "$OPEN_URL" ] && [ "$TASK_COMMAND" != "review-pr" ]; then
     REMOTE_URL=$(git remote get-url origin 2>/dev/null || echo "")
     if [ -n "$REMOTE_URL" ]; then
       REMOTE_BASE=""
@@ -715,6 +1265,7 @@ else
   terminal-notifier -title "$CURRENT_BRANCH" -subtitle "$REPO_NAME" -message "$TASK_LABEL failed" -sound Basso 2>/dev/null || true
 fi
 
+printf "%s\\n" "$EXIT_CODE" > ${JSON.stringify(exitCodeFile)}
 printf "" > "$PID_FILE"
 
 exit $EXIT_CODE
@@ -729,7 +1280,7 @@ exit $EXIT_CODE
 
   let child: ChildProcess;
   try {
-    child = spawn("/bin/bash", ["-lc", script], {
+    child = spawn("/bin/bash", ["-c", script], {
       cwd: dir,
       detached: true,
       stdio: "ignore",

@@ -182,7 +182,7 @@ export default function ViewTasks() {
                     toast.style = Toast.Style.Failure;
                     toast.title = "No skill file configured";
                     toast.message =
-                      "Please configure one via Manage Folders & Skills";
+                      "Please configure one via Manage Folders&Skills&Agents";
                     return;
                   }
                   toast.style = Toast.Style.Success;

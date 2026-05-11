@@ -17,6 +17,7 @@ import { useState, useEffect, useCallback } from "react";
 import { launchTask, readTaskOutput } from "./task-manager";
 import {
   extractReviewReport,
+  fallbackReviewReport,
   ReviewReportDetail,
   TaskDetail,
 } from "./task-detail";
@@ -171,7 +172,8 @@ function PRPicker({
           });
         } else if (completedTask) {
           const output = readTaskOutput(completedTask);
-          const report = extractReviewReport(output);
+          const report =
+            extractReviewReport(output) || fallbackReviewReport(completedTask);
           if (report) {
             states.set(pr.url, {
               hasReport: true,
@@ -233,12 +235,13 @@ function PRPicker({
           prUrl: pr.url,
           skillName: skill.skillName,
           skillDir: skill.skillDir,
+          agent: skill.agent,
         },
       );
       if (!task) {
         toast.style = Toast.Style.Failure;
         toast.title = "No skill file configured";
-        toast.message = "Please configure one via Manage Folders & Skills";
+        toast.message = "Please configure one via Manage Folders&Skills&Agents";
         return;
       }
       toast.style = Toast.Style.Success;

@@ -7,7 +7,13 @@ import {
   Toast,
 } from "@raycast/api";
 import { useState, useEffect } from "react";
-import { getSkillPath, setSkillPath, type SkillCommand } from "./storage";
+import {
+  getAgent,
+  getSkillPath,
+  setSkillPath,
+  type Agent,
+  type SkillCommand,
+} from "./storage";
 import { skillPathToName } from "./task-manager";
 import { dirFromPath } from "./git-utils";
 
@@ -57,6 +63,7 @@ export { pickSkillFile };
 export interface SkillConfig {
   skillName: string;
   skillDir: string;
+  agent: Agent;
 }
 
 interface SkillGateProps {
@@ -70,9 +77,12 @@ export function SkillGate({ command, children }: SkillGateProps) {
 
   useEffect(() => {
     (async () => {
-      const path = await getSkillPath(command);
+      const [path, agent] = await Promise.all([
+        getSkillPath(command),
+        getAgent(),
+      ]);
       if (path) {
-        setConfig(skillPathToConfig(path));
+        setConfig(skillPathToConfig(path, agent));
       }
       setIsLoading(false);
     })();
@@ -91,10 +101,10 @@ export function SkillGate({ command, children }: SkillGateProps) {
   );
 }
 
-function skillPathToConfig(path: string): SkillConfig {
+function skillPathToConfig(path: string, agent: Agent): SkillConfig {
   const name = skillPathToName(path);
   const dir = dirFromPath(path);
-  return { skillName: name, skillDir: dir };
+  return { skillName: name, skillDir: dir, agent };
 }
 
 function SkillPrompt({
@@ -124,7 +134,7 @@ function SkillPrompt({
       style: Toast.Style.Success,
       title: `Skill configured: /${name}`,
     });
-    onConfigured(skillPathToConfig(path));
+    onConfigured(skillPathToConfig(path, await getAgent()));
   }
 
   return (

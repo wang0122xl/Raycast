@@ -62,11 +62,12 @@ function BranchPicker({
         targetBranch: branch,
         skillName: skill.skillName,
         skillDir: skill.skillDir,
+        agent: skill.agent,
       });
       if (!task) {
         toast.style = Toast.Style.Failure;
         toast.title = "No skill file configured";
-        toast.message = "Please configure one via Manage Folders & Skills";
+        toast.message = "Please configure one via Manage Folders&Skills&Agents";
         return;
       }
       toast.style = Toast.Style.Success;

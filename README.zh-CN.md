@@ -16,6 +16,7 @@ scripts/             # Raycast 脚本命令（独立 shell 脚本）
 | 目录 | EN | 中文 |
 |------|----|----|
 | `extensions/claude-git-tools/` | [README](extensions/claude-git-tools/README.md) | [中文](extensions/claude-git-tools/README.zh-CN.md) |
+| `extensions/code-open/` | [README](extensions/code-open/README.md) | [中文](extensions/code-open/README.zh-CN.md) |
 | `scripts/` | [README](scripts/README.md) | [中文](scripts/README.zh-CN.md) |
 
 ## 许可证
