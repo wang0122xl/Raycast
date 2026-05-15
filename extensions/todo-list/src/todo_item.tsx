@@ -125,58 +125,24 @@ const SingleTodoItem = ({ item, idx, sectionKey }: { item: TodoItem; idx: number
                 title="Mark as Completed"
               />
             )}
-            <Action
-              icon={{ source: Icon.Pencil, tintColor: Color.Orange }}
-              onAction={() => {
-                setSearchMode(false);
-                editTodo();
-              }}
-              shortcut={{ modifiers: ["cmd"], key: "e" }}
-              title="Edit Todo"
-            />
-            <Action
-              icon={{ source: Icon.Tag, tintColor: Color.PrimaryText }}
-              onAction={() => {
-                editTodoTag();
-                push(<TodoTagForm />);
-              }}
-              shortcut={{ modifiers: ["cmd"], key: "t" }}
-              title="Edit Tag"
-            />
-            <Action
-              icon={{ source: Icon.Clock, tintColor: Color.PrimaryText }}
-              onAction={() => {
-                editTodoDueDate();
-                push(<TodoDueDateForm />);
-              }}
-              shortcut={{ modifiers: ["cmd"], key: "e" }}
-              title="Edit Due Date"
-            />
-            <Action
-              icon={{ source: Icon.Trash, tintColor: Color.Red }}
-              onAction={() => deleteTodo()}
-              shortcut={{ modifiers: ["cmd"], key: "d" }}
-              style={Action.Style.Destructive}
-              title="Delete Todo"
-            />
             {sectionKey === "pinned" ? (
               <Action
                 icon={{ source: Icon.Pin, tintColor: Color.Blue }}
                 onAction={() => unPin()}
-                shortcut={{ modifiers: ["cmd", "opt"], key: "p" }}
+                shortcut={{ modifiers: ["cmd"], key: "enter" }}
                 title="Unpin Todo"
               />
             ) : (
               <Action
                 icon={{ source: Icon.Pin, tintColor: Color.Blue }}
                 onAction={() => pin()}
-                shortcut={{ modifiers: ["cmd", "opt"], key: "p" }}
+                shortcut={{ modifiers: ["cmd"], key: "enter" }}
                 title="Pin Todo"
               />
             )}
             <ActionPanel.Submenu
               icon={Icon.Exclamationmark}
-              shortcut={{ modifiers: ["cmd", "shift"], key: "p" }}
+              shortcut={{ modifiers: ["shift"], key: "enter" }}
               title="Set Priority"
             >
               <Action onAction={() => setPriority(undefined)} title="None" />
@@ -199,6 +165,40 @@ const SingleTodoItem = ({ item, idx, sectionKey }: { item: TodoItem; idx: number
                 title="High"
               />
             </ActionPanel.Submenu>
+            <Action
+              icon={{ source: Icon.Pencil, tintColor: Color.Orange }}
+              onAction={() => {
+                setSearchMode(false);
+                editTodo();
+              }}
+              shortcut={{ modifiers: ["cmd"], key: "e" }}
+              title="Edit Todo"
+            />
+            <Action
+              icon={{ source: Icon.Clock, tintColor: Color.PrimaryText }}
+              onAction={() => {
+                editTodoDueDate();
+                push(<TodoDueDateForm />);
+              }}
+              shortcut={{ modifiers: ["cmd", "shift"], key: "e" }}
+              title="Edit Due Date"
+            />
+            <Action
+              icon={{ source: Icon.Tag, tintColor: Color.PrimaryText }}
+              onAction={() => {
+                editTodoTag();
+                push(<TodoTagForm />);
+              }}
+              shortcut={{ modifiers: ["cmd"], key: "t" }}
+              title="Edit Tag"
+            />
+            <Action
+              icon={{ source: Icon.Trash, tintColor: Color.Red }}
+              onAction={() => deleteTodo()}
+              shortcut={{ modifiers: ["cmd"], key: "d" }}
+              style={Action.Style.Destructive}
+              title="Delete Todo"
+            />
             {urls &&
               urls.length > 0 &&
               (urls.length === 1 ? (

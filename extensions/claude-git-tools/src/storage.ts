@@ -7,6 +7,8 @@ const TASKS_KEY = "tasks";
 const MODEL_KEY = "selected-model";
 const CODEX_MODEL_KEY = "selected-codex-model";
 const GEMINI_MODEL_KEY = "selected-gemini-model";
+const MODEL_COMMAND_KEY = "selected-model-command";
+const COMMAND_MODEL_PREFIX = "selected-model:";
 const AGENT_KEY = "selected-agent";
 const SKILL_PREFIX = "skill-";
 
@@ -25,6 +27,9 @@ export const DEFAULT_GEMINI_MODEL: GeminiModel = "gemini-3.1-pro-preview";
 export type Agent = "claude" | "codex" | "opencode" | "gemini";
 export const DEFAULT_AGENT: Agent = "claude";
 
+export type SkillCommand = "git-push" | "create-pr" | "review-pr";
+export const DEFAULT_MODEL_COMMAND: SkillCommand = "git-push";
+
 export interface Task {
   id: string;
   command: string;
@@ -37,6 +42,7 @@ export interface Task {
   outputFile: string;
   pidFile: string;
   exitCodeFile?: string;
+  commandLine?: string;
   agent?: Agent;
   startTime: number;
 }
@@ -173,6 +179,82 @@ export async function setGeminiModel(model: GeminiModel) {
   await LocalStorage.setItem(GEMINI_MODEL_KEY, model);
 }
 
+function commandModelKey(command: SkillCommand, agent: Agent): string {
+  return `${COMMAND_MODEL_PREFIX}${command}:${agent}`;
+}
+
+function isSkillCommand(value: string | undefined): value is SkillCommand {
+  return value === "git-push" || value === "create-pr" || value === "review-pr";
+}
+
+export async function getModelCommand(): Promise<SkillCommand> {
+  const raw = await LocalStorage.getItem<string>(MODEL_COMMAND_KEY);
+  return isSkillCommand(raw) ? raw : DEFAULT_MODEL_COMMAND;
+}
+
+export async function setModelCommand(command: SkillCommand): Promise<void> {
+  await LocalStorage.setItem(MODEL_COMMAND_KEY, command);
+}
+
+export async function getClaudeModelForCommand(
+  command: SkillCommand,
+): Promise<ClaudeModel> {
+  const raw = await LocalStorage.getItem<string>(
+    commandModelKey(command, "claude"),
+  );
+  if (raw === "haiku" || raw === "sonnet" || raw === "opus") return raw;
+  return DEFAULT_MODEL;
+}
+
+export async function setClaudeModelForCommand(
+  command: SkillCommand,
+  model: ClaudeModel,
+): Promise<void> {
+  await LocalStorage.setItem(commandModelKey(command, "claude"), model);
+}
+
+export async function getCodexModelForCommand(
+  command: SkillCommand,
+): Promise<CodexModel> {
+  const raw = await LocalStorage.getItem<string>(
+    commandModelKey(command, "codex"),
+  );
+  if (raw === "gpt-5.5" || raw === "gpt-5.4" || raw === "gpt-5.3-codex") {
+    return raw;
+  }
+  return DEFAULT_CODEX_MODEL;
+}
+
+export async function setCodexModelForCommand(
+  command: SkillCommand,
+  model: CodexModel,
+): Promise<void> {
+  await LocalStorage.setItem(commandModelKey(command, "codex"), model);
+}
+
+export async function getGeminiModelForCommand(
+  command: SkillCommand,
+): Promise<GeminiModel> {
+  const raw = await LocalStorage.getItem<string>(
+    commandModelKey(command, "gemini"),
+  );
+  if (
+    raw === "gemini-3.1-pro-preview" ||
+    raw === "gemini-3-flash-preview" ||
+    raw === "gemini-3.1-flash-lite-preview"
+  ) {
+    return raw;
+  }
+  return DEFAULT_GEMINI_MODEL;
+}
+
+export async function setGeminiModelForCommand(
+  command: SkillCommand,
+  model: GeminiModel,
+): Promise<void> {
+  await LocalStorage.setItem(commandModelKey(command, "gemini"), model);
+}
+
 export async function getAgent(): Promise<Agent> {
   const raw = await LocalStorage.getItem<string>(AGENT_KEY);
   if (
@@ -189,8 +271,6 @@ export async function getAgent(): Promise<Agent> {
 export async function setAgent(agent: Agent) {
   await LocalStorage.setItem(AGENT_KEY, agent);
 }
-
-export type SkillCommand = "git-push" | "create-pr" | "review-pr";
 
 export async function getSkillPath(
   command: SkillCommand,

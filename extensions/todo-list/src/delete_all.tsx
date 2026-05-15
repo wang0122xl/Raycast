@@ -24,7 +24,6 @@ const DeleteAllAction = () => {
           },
         });
       }}
-      shortcut={{ modifiers: ["cmd", "shift"], key: "d" }}
       style={Action.Style.Destructive}
       title="Delete All Todos"
     />

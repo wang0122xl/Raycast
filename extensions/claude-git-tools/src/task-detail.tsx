@@ -88,7 +88,6 @@ export function extractReviewReport(output: string): string | null {
   const endIdx = output.indexOf(REVIEW_REPORT_DELIMITER, contentStart);
   if (endIdx === -1) return null;
   const content = output.slice(contentStart, endIdx).trim();
-  if (!content.includes("# PR 审查报告")) return null;
   return content || null;
 }
 
@@ -260,6 +259,21 @@ function formatMetadataLine(task: Task): string {
   return parts.join(" | ");
 }
 
+function sanitizeCommandLine(commandLine: string): string {
+  return commandLine
+    .replace(/(--prompt\s+)'(?:'\\''|[^'])*'/, "$1'[prompt omitted]'")
+    .replace(
+      /(\bopencode\s+run\b[\s\S]*\s--\s)'(?:'\\''|[^'])*'$/,
+      "$1'[prompt omitted]'",
+    );
+}
+
+function formatCommandLine(task: Task): string {
+  return `command: ${
+    task.commandLine ? sanitizeCommandLine(task.commandLine) : "(unavailable)"
+  }`;
+}
+
 function formatTerminalMarkdown(
   task: Task,
   status: Task["status"],
@@ -273,10 +287,18 @@ function formatTerminalMarkdown(
   const blocks = [formatDiffBlock(lines.join("\n"))];
 
   if (status === "running") {
-    blocks.push(formatDiffBlock(getLatestOutputText(output)));
+    blocks.push(
+      formatDiffBlock(
+        [formatCommandLine(task), getLatestOutputText(output)].join("\n"),
+      ),
+    );
   }
 
-  blocks.push(formatDiffBlock(getOutputText(output)));
+  blocks.push(
+    formatDiffBlock(
+      [formatCommandLine(task), getOutputText(output)].join("\n"),
+    ),
+  );
 
   return blocks.join("\n\n");
 }

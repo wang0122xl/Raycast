@@ -43,7 +43,6 @@ const ClearCompletedAction = () => {
     <Action
       icon={{ source: Icon.Trash, tintColor: hasCompletedTodo ? Color.Red : undefined }}
       onAction={handleClearCompleted}
-      shortcut={{ modifiers: ["cmd", "opt"], key: "c" }}
       style={hasCompletedTodo ? Action.Style.Destructive : undefined}
       title="Clear Completed Todos"
     />

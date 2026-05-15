@@ -14,9 +14,9 @@ import { tmpdir, homedir } from "os";
 import {
   addTask,
   getAgent,
-  getCodexModel,
-  getGeminiModel,
-  getModel,
+  getClaudeModelForCommand,
+  getCodexModelForCommand,
+  getGeminiModelForCommand,
   getSkillPath,
   removeTask,
   updateTask,
@@ -186,6 +186,10 @@ function buildCodexCommand(promptFile: string, model: CodexModel): string {
 }
 
 function buildOpenCodeCommand(promptFile: string): string {
+  return buildOpenCodeCommandWithPrompt(readFileSync(promptFile, "utf-8"));
+}
+
+function buildOpenCodeCommandWithPrompt(prompt: string): string {
   return [
     "opencode",
     "run",
@@ -193,23 +197,38 @@ function buildOpenCodeCommand(promptFile: string): string {
     "json",
     "--dangerously-skip-permissions",
     "--",
-    shellQuote(readFileSync(promptFile, "utf-8")),
+    shellQuote(prompt),
   ].join(" ");
 }
 
 function buildGeminiCommand(promptFile: string, model: GeminiModel): string {
+  return buildGeminiCommandWithPrompt(readFileSync(promptFile, "utf-8"), model);
+}
+
+function buildGeminiCommandWithPrompt(
+  prompt: string,
+  model: GeminiModel,
+): string {
   return [
     "gemini",
     "--model",
     shellQuote(model),
     "--prompt",
-    shellQuote(readFileSync(promptFile, "utf-8")),
+    shellQuote(prompt),
     "--output-format",
     "stream-json",
     "--skip-trust",
     "--approval-mode",
     "yolo",
   ].join(" ");
+}
+
+function formatCommandLineForDisplay(commandLine: string): string {
+  return commandLine.replace(/\r/g, "\\r").replace(/\n/g, "\\n");
+}
+
+function formatPromptPlaceholder(promptFile: string): string {
+  return `[prompt omitted; see ${promptFile}]`;
 }
 
 function getTaskFileId(name: string): string | null {
@@ -1059,9 +1078,9 @@ export async function launchTask(
   writeFileSync(promptFile, prompt);
 
   const [claudeModel, codexModel, geminiModel] = await Promise.all([
-    getModel(),
-    getCodexModel(),
-    getGeminiModel(),
+    getClaudeModelForCommand(command),
+    getCodexModelForCommand(command),
+    getGeminiModelForCommand(command),
   ]);
   const agentModel =
     selectedAgent === "claude"
@@ -1079,6 +1098,15 @@ export async function launchTask(
         : selectedAgent === "opencode"
           ? buildOpenCodeCommand(promptFile)
           : buildGeminiCommand(promptFile, geminiModel);
+  const promptPlaceholder = formatPromptPlaceholder(promptFile);
+  const displayCommand =
+    selectedAgent === "opencode"
+      ? buildOpenCodeCommandWithPrompt(promptPlaceholder)
+      : selectedAgent === "gemini"
+        ? buildGeminiCommandWithPrompt(promptPlaceholder, geminiModel)
+        : agentCommand;
+  task.commandLine = formatCommandLineForDisplay(displayCommand);
+  await updateTask(task.id, { commandLine: task.commandLine });
   const home = homedir();
 
   const script = `

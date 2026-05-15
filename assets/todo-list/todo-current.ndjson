@@ -1,8 +1,9 @@
-{"title":"wisop - 配置页参数配置","completed":false,"timeAdded":1778319308905,"id":"todo-1778319308905-todo-0-wisop","section":"todo","updatedAt":1778319308911,"tag":""}
-{"title":"因子执行接口对接","completed":false,"timeAdded":1778463043464,"id":"todo-1778463043464-todo-2-item","section":"todo","updatedAt":1778463043469}
-{"title":"session/new 接口会 http 400 错误码 4003003的 的code，命中敏感词会返回这个，建议全局处理这个code 而不是仅仅在 session/new接口","completed":false,"timeAdded":1778583474609,"id":"todo-1778583474609-todo-3-session-new-http-400-4003003-code-code-session-new","section":"todo","updatedAt":1778583474616}
-{"title":"fQuantify - 因子评估、复现，模型复现增加文件目录预览功能","completed":true,"timeAdded":1778341787191,"id":"todo-1778341787191-todo-1-fquantify","section":"completed","updatedAt":1778341787199,"completedAt":1778341789499}
-{"title":"阅读器引用弹窗显示优化","completed":true,"timeAdded":1778463037003,"id":"todo-1778463037003-todo-1-item","section":"completed","updatedAt":1778463037033,"completedAt":1778564591027}
+{"title":"wisop - 配置页参数配置","completed":false,"timeAdded":1778319308905,"id":"todo-1778319308905-todo-0-wisop","section":"todo","updatedAt":1778319308911,"tag":"","dueDate":1778688000001}
+{"title":"因子执行接口对接","completed":false,"timeAdded":1778463043464,"id":"todo-1778463043464-todo-2-item","section":"todo","updatedAt":1778463043469,"priority":2}
+{"title":"因子评估 - 适配接口重构","completed":false,"timeAdded":1778659625273,"id":"todo-1778659625273-todo-2-item","section":"todo","updatedAt":1778659625303}
+{"title":"fQuantify - 因子评估、复现，模型复现增加文件目录预览功能","completed":true,"timeAdded":1778341787191,"id":"todo-1778341787191-todo-1-fquantify","section":"completed","updatedAt":1778341787199,"dueDate":1778688000001,"completedAt":1778341789499}
 {"title":"wisop - credits充值支持单邮箱多用户场景","completed":true,"timeAdded":1778495375043,"id":"todo-1778495375043-todo-3-wisop-credits","section":"completed","updatedAt":1778495375052,"completedAt":1778495376975}
 {"title":"因子详情 - 增加pdf阅读器显示上传的pdf","completed":true,"timeAdded":1778571885610,"id":"todo-1778571885610-todo-2-pdf-pdf","section":"completed","updatedAt":1778571885619,"completedAt":1778579732050}
 {"title":"fix: 复现中的实验，从详情点击进入，实验输出和agent输出的内容错误，每次刷新也会刷出不同的时间点内容【解析未完成时离开页面，导致任务创建失败。预期：先创建任务，再解析】","completed":true,"timeAdded":1778571912380,"id":"todo-1778571912380-todo-3-fix-agent","section":"completed","updatedAt":1778571912391,"completedAt":1778636458451}
+{"title":"session/new 接口会 http 400 错误码 4003003的 的code，命中敏感词会返回这个，建议全局处理这个code 而不是仅仅在 session/new接口","completed":true,"timeAdded":1778583474609,"id":"todo-1778583474609-todo-3-session-new-http-400-4003003-code-code-session-new","section":"completed","updatedAt":1778583474616,"completedAt":1778659602548}
+{"title":"阅读器引用弹窗显示优化","completed":true,"timeAdded":1778463037003,"id":"todo-1778463037003-todo-1-item","section":"completed","updatedAt":1778463037033,"completedAt":1778722800247}

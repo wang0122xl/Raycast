@@ -32,9 +32,8 @@ const MarkAllIncompleteAction = () => {
   };
   return (
     <Action
-      icon={{ source: Icon.RotateAntiClockwise, tintColor: Color.Magenta }}
+      icon={{ source: Icon.RotateAntiClockwise, tintColor: Color.Red }}
       onAction={handleMarkAllIncomplete}
-      shortcut={{ modifiers: ["cmd"], key: "r" }}
       title="Mark All Incomplete"
     />
   );

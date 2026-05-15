@@ -29,8 +29,17 @@ export const insertIntoSection = (
   return currentSection;
 };
 
+function sortCompletedByCompletedAt(a: TodoItem, b: TodoItem) {
+  const completedDiff = (b.completedAt ?? b.timeAdded) - (a.completedAt ?? a.timeAdded);
+  if (completedDiff !== 0) return completedDiff;
+  return b.timeAdded - a.timeAdded;
+}
+
 export function sortTodoItem(a: TodoItem, b: TodoItem) {
   const { sortOrder } = preferences;
+  if (a.completed && b.completed) {
+    return sortCompletedByCompletedAt(a, b);
+  }
   if ((a.priority || b.priority) && a.priority != b.priority) {
     return (b.priority ?? 0) - (a.priority ?? 0);
   }
@@ -64,9 +73,7 @@ export function sortSearchTodoItem(a: TodoItem, b: TodoItem) {
   if (a.completed && !b.completed) return 1;
   if (!a.completed && !b.completed) return b.timeAdded - a.timeAdded;
 
-  const completedDiff = (b.completedAt ?? b.timeAdded) - (a.completedAt ?? a.timeAdded);
-  if (completedDiff !== 0) return completedDiff;
-  return b.timeAdded - a.timeAdded;
+  return sortCompletedByCompletedAt(a, b);
 }
 
 function searchableDateParts(timestamp?: number) {
