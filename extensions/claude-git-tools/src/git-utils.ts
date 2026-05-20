@@ -11,6 +11,31 @@ interface GitRepo {
   displayName: string;
 }
 
+export interface GitWorkspaceStatus {
+  changed: number;
+  untracked: number;
+  conflicted: number;
+  ahead: number;
+  behind: number;
+}
+
+export type GitFileStatus =
+  | "modified"
+  | "added"
+  | "deleted"
+  | "renamed"
+  | "copied"
+  | "untracked"
+  | "conflicted";
+
+export interface GitChangedFile {
+  path: string;
+  oldPath?: string;
+  status: GitFileStatus;
+  indexStatus: string;
+  worktreeStatus: string;
+}
+
 function scanForGitRepos(baseDir: string, maxDepth: number): GitRepo[] {
   const repos: GitRepo[] = [];
   const baseName = basename(baseDir);
@@ -81,6 +106,169 @@ export function execGhAsync(args: string[], dir: string): Promise<string> {
       },
     );
   });
+}
+
+function parseAheadBehind(branchLine: string) {
+  const aheadMatch = branchLine.match(/ahead (\d+)/);
+  const behindMatch = branchLine.match(/behind (\d+)/);
+
+  return {
+    ahead: aheadMatch ? Number(aheadMatch[1]) : 0,
+    behind: behindMatch ? Number(behindMatch[1]) : 0,
+  };
+}
+
+function isConflictedStatus(status: string) {
+  return ["DD", "AU", "UD", "UA", "DU", "AA", "UU"].includes(status);
+}
+
+function getFileStatus(indexStatus: string, worktreeStatus: string) {
+  const status = `${indexStatus}${worktreeStatus}`;
+  if (status === "??") return "untracked";
+  if (isConflictedStatus(status)) return "conflicted";
+  if (indexStatus === "R" || worktreeStatus === "R") return "renamed";
+  if (indexStatus === "C" || worktreeStatus === "C") return "copied";
+  if (indexStatus === "A" || worktreeStatus === "A") return "added";
+  if (indexStatus === "D" || worktreeStatus === "D") return "deleted";
+  return "modified";
+}
+
+function parseStatusPath(rawPath: string) {
+  const renameParts = rawPath.split(" -> ");
+  if (renameParts.length === 2) {
+    return { oldPath: renameParts[0], path: renameParts[1] };
+  }
+  return { path: rawPath };
+}
+
+export function getGitWorkspaceStatus(
+  dir: string,
+): Promise<GitWorkspaceStatus | null> {
+  return new Promise((resolve) => {
+    execFile(
+      "git",
+      ["status", "--porcelain=v1", "--branch"],
+      {
+        cwd: dir,
+        encoding: "utf-8",
+        timeout: 5000,
+        env: { ...process.env, PATH: EXTENDED_PATH },
+      },
+      (err, stdout) => {
+        if (err) {
+          resolve(null);
+          return;
+        }
+
+        let changed = 0;
+        let untracked = 0;
+        let conflicted = 0;
+        let ahead = 0;
+        let behind = 0;
+
+        for (const line of stdout.split("\n")) {
+          if (!line) continue;
+          if (line.startsWith("## ")) {
+            ({ ahead, behind } = parseAheadBehind(line));
+            continue;
+          }
+
+          const status = line.slice(0, 2);
+          if (status === "??") {
+            untracked += 1;
+          } else if (isConflictedStatus(status)) {
+            conflicted += 1;
+          } else {
+            changed += 1;
+          }
+        }
+
+        resolve({ changed, untracked, conflicted, ahead, behind });
+      },
+    );
+  });
+}
+
+export function getGitChangedFiles(dir: string): Promise<GitChangedFile[]> {
+  return new Promise((resolve) => {
+    execFile(
+      "git",
+      ["status", "--porcelain=v1"],
+      {
+        cwd: dir,
+        encoding: "utf-8",
+        timeout: 5000,
+        env: { ...process.env, PATH: EXTENDED_PATH },
+      },
+      (err, stdout) => {
+        if (err) {
+          resolve([]);
+          return;
+        }
+
+        const files = stdout
+          .split("\n")
+          .filter(Boolean)
+          .map((line) => {
+            const indexStatus = line[0] || " ";
+            const worktreeStatus = line[1] || " ";
+            const { oldPath, path } = parseStatusPath(line.slice(3));
+
+            return {
+              path,
+              oldPath,
+              status: getFileStatus(indexStatus, worktreeStatus),
+              indexStatus,
+              worktreeStatus,
+            };
+          });
+
+        resolve(files);
+      },
+    );
+  });
+}
+
+function execGitDiff(args: string[], dir: string): Promise<string> {
+  return new Promise((resolve) => {
+    execFile(
+      "git",
+      args,
+      {
+        cwd: dir,
+        encoding: "utf-8",
+        maxBuffer: 1024 * 1024 * 4,
+        timeout: 10000,
+        env: { ...process.env, PATH: EXTENDED_PATH },
+      },
+      (_err, stdout) => {
+        resolve(stdout);
+      },
+    );
+  });
+}
+
+export async function getGitFileDiff(
+  dir: string,
+  file: GitChangedFile,
+): Promise<string> {
+  if (file.status === "untracked") {
+    return execGitDiff(
+      ["diff", "--no-index", "--", "/dev/null", file.path],
+      dir,
+    );
+  }
+
+  const stagedDiff =
+    file.indexStatus !== " " && file.indexStatus !== "?"
+      ? await execGitDiff(["diff", "--cached", "--", file.path], dir)
+      : "";
+  const worktreeDiff =
+    file.worktreeStatus !== " " && file.worktreeStatus !== "?"
+      ? await execGitDiff(["diff", "--", file.path], dir)
+      : "";
+
+  return [stagedDiff, worktreeDiff].filter(Boolean).join("\n");
 }
 
 export type MergeMethod = "--merge" | "--rebase" | "--squash";

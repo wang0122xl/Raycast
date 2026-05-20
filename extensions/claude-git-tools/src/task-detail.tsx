@@ -13,7 +13,7 @@ import {
   useNavigation,
 } from "@raycast/api";
 import { useCallback, useEffect, useState } from "react";
-import { removeTask, updateTask, type Task } from "./storage";
+import { getTasks, removeTask, updateTask, type Task } from "./storage";
 import {
   getTaskStatus,
   getSkillOptionsForCommand,
@@ -30,17 +30,34 @@ import {
   type MergeMethod,
 } from "./git-utils";
 
-async function checkPrOpen(prUrl: string, dir: string): Promise<boolean> {
+type ReviewShortcutState =
+  | "querying"
+  | "closed"
+  | "merged"
+  | "reviewed"
+  | "ready for review";
+
+async function getReviewShortcutState(
+  prUrl: string,
+  dir: string,
+): Promise<ReviewShortcutState> {
   try {
     const stdout = await execGhAsync(
       ["pr", "view", prUrl, "--json", "state"],
       dir,
     );
     const data = JSON.parse(stdout);
-    return data.state?.toLowerCase() === "open";
+    const state = String(data.state || "").toLowerCase();
+    if (state === "merged") return "merged";
+    if (state === "open") return "ready for review";
+    return "closed";
   } catch {
-    return false;
+    return "closed";
   }
+}
+
+async function checkPrOpen(prUrl: string, dir: string): Promise<boolean> {
+  return (await getReviewShortcutState(prUrl, dir)) === "ready for review";
 }
 
 const REFRESH_INTERVAL_MS = 1000;
@@ -105,6 +122,31 @@ export function fallbackReviewReport(task: Task): string | null {
     "",
     `PR: ${task.prUrl}`,
   ].join("\n");
+}
+
+async function findLocalReviewReport(
+  prUrl: string,
+  dir: string,
+): Promise<string | null> {
+  const tasks = await getTasks();
+  const completedReviewTasks = tasks
+    .filter(
+      (item) =>
+        item.command === "review-pr" &&
+        item.prUrl === prUrl &&
+        item.dir === dir &&
+        item.status === "completed",
+    )
+    .sort((a, b) => b.startTime - a.startTime);
+
+  for (const reviewTask of completedReviewTasks) {
+    const report =
+      extractReviewReport(readTaskOutput(reviewTask)) ||
+      fallbackReviewReport(reviewTask);
+    if (report) return report;
+  }
+
+  return null;
 }
 
 function getStatusLabel(status: Task["status"]): string {
@@ -303,6 +345,29 @@ function formatTerminalMarkdown(
   return blocks.join("\n\n");
 }
 
+function formatTaskDetailTitle(
+  task: Task,
+  showReviewShortcutHint: boolean,
+  reviewShortcutState: ReviewShortcutState,
+): string {
+  if (!showReviewShortcutHint || reviewShortcutState === "querying") {
+    return task.label;
+  }
+
+  switch (reviewShortcutState) {
+    case "ready for review":
+      return `${task.label} · Ready (cmd+shift+r to review)`;
+    case "reviewed":
+      return `${task.label} · Reviewed`;
+    case "merged":
+      return `${task.label} · Merged`;
+    case "closed":
+      return `${task.label} · Closed`;
+    case "querying":
+      return task.label;
+  }
+}
+
 export function TaskDetail({
   task,
   allowClear = false,
@@ -317,6 +382,11 @@ export function TaskDetail({
   const [status, setStatus] = useState<Task["status"]>(task.status);
   const [hasAutoNavigated, setHasAutoNavigated] = useState(false);
   const [prOpen, setPrOpen] = useState(false);
+  const [reviewShortcutState, setReviewShortcutState] =
+    useState<ReviewShortcutState>("querying");
+  const [createPrReviewReport, setCreatePrReviewReport] = useState<
+    string | null
+  >(null);
 
   const isReviewPr = task.command === "review-pr" && !!task.prUrl;
 
@@ -400,7 +470,22 @@ export function TaskDetail({
     if (task.command !== "create-pr" || !gitUrl) {
       return;
     }
-    void checkPrOpen(gitUrl, task.dir).then(setPrOpen);
+    let canceled = false;
+    setReviewShortcutState("querying");
+    setCreatePrReviewReport(null);
+    setPrOpen(false);
+    void Promise.all([
+      findLocalReviewReport(gitUrl, task.dir),
+      getReviewShortcutState(gitUrl, task.dir),
+    ]).then(([localReport, nextState]) => {
+      if (canceled) return;
+      setCreatePrReviewReport(localReport);
+      setPrOpen(nextState === "ready for review");
+      setReviewShortcutState(localReport ? "reviewed" : nextState);
+    });
+    return () => {
+      canceled = true;
+    };
   }, [task.command, task.dir, gitUrl]);
 
   const prNumber = extractPrNumber(task.prUrl || gitUrl || "");
@@ -426,6 +511,7 @@ export function TaskDetail({
       toast.style = Toast.Style.Success;
       toast.title = `PR #${prNumber} merged`;
       setPrOpen(false);
+      setReviewShortcutState("merged");
     } catch (error) {
       toast.style = Toast.Style.Failure;
       toast.title = "Failed to merge PR";
@@ -451,6 +537,7 @@ export function TaskDetail({
       toast.style = Toast.Style.Success;
       toast.title = `PR #${prNumber} closed`;
       setPrOpen(false);
+      setReviewShortcutState("closed");
     } catch (error) {
       toast.style = Toast.Style.Failure;
       toast.title = "Failed to close PR";
@@ -478,16 +565,66 @@ export function TaskDetail({
     });
   }
 
+  async function handleStartReview() {
+    if (!gitUrl) return;
+    const toast = await showToast({
+      style: Toast.Style.Animated,
+      title: "Starting PR review...",
+    });
+    try {
+      const skillOpts = await getSkillOptionsForCommand("review-pr");
+      const reviewTask = await launchTask("review-pr", task.dir, "review-pr", {
+        prUrl: gitUrl,
+        ...skillOpts,
+      });
+      if (!reviewTask) {
+        toast.style = Toast.Style.Failure;
+        toast.title = "No skill file configured";
+        toast.message = "Please configure one via Manage Folders&Skills&Agents";
+        return;
+      }
+      toast.style = Toast.Style.Success;
+      toast.title = "PR review task started";
+      push(
+        <TaskDetail
+          task={reviewTask}
+          onRerunReview={async () => {
+            const so = await getSkillOptionsForCommand("review-pr");
+            const t = await launchTask("review-pr", task.dir, "review-pr", {
+              prUrl: gitUrl,
+              ...so,
+            });
+            if (t) push(<TaskDetail task={t} />);
+          }}
+        />,
+      );
+    } catch (error) {
+      toast.style = Toast.Style.Failure;
+      toast.title = "Failed to start PR review";
+      toast.message = error instanceof Error ? error.message : String(error);
+    }
+  }
+
   const reviewReport =
     finished && task.command === "review-pr" && task.prUrl
       ? extractReviewReport(displayOutput) || fallbackReviewReport(task)
       : null;
+  const showReviewShortcutHint =
+    finished && task.command === "create-pr" && !!gitUrl;
+  const hasReviewReportAction =
+    (reviewReport && task.prUrl) || (createPrReviewReport && gitUrl);
   const markdown = formatTerminalMarkdown(task, status, displayOutput);
+  const navigationTitle = formatTaskDetailTitle(
+    task,
+    showReviewShortcutHint,
+    reviewShortcutState,
+  );
 
   return (
     <Detail
+      isLoading={showReviewShortcutHint && reviewShortcutState === "querying"}
       markdown={markdown}
-      navigationTitle={task.label}
+      navigationTitle={navigationTitle}
       actions={
         <ActionPanel>
           {reviewReport && task.prUrl && (
@@ -508,7 +645,27 @@ export function TaskDetail({
               }
             />
           )}
-          {!(reviewReport && task.prUrl) && (
+          {createPrReviewReport && gitUrl && (
+            <Action
+              title="View Review Report"
+              icon={Icon.Document}
+              onAction={() =>
+                push(
+                  <ReviewReportDetail
+                    markdown={createPrReviewReport}
+                    gitUrl={gitUrl}
+                    navigationTitle={task.label}
+                    prState={prOpen ? "open" : "closed"}
+                    dirPath={task.dir}
+                    onReview={
+                      prOpen ? () => void handleStartReview() : undefined
+                    }
+                  />,
+                )
+              }
+            />
+          )}
+          {!hasReviewReportAction && (
             <Action
               title="Close Raycast"
               icon={Icon.Window}
@@ -568,58 +725,17 @@ export function TaskDetail({
               onAction={() => void handleCloseMainWindow()}
             />
           )}
-          {task.command === "create-pr" && prOpen && gitUrl && (
-            <Action
-              title="Review Pr"
-              icon={Icon.MagnifyingGlass}
-              shortcut={{ modifiers: ["cmd", "shift"], key: "r" }}
-              onAction={async () => {
-                const toast = await showToast({
-                  style: Toast.Style.Animated,
-                  title: "Starting PR review...",
-                });
-                try {
-                  const skillOpts =
-                    await getSkillOptionsForCommand("review-pr");
-                  const reviewTask = await launchTask(
-                    "review-pr",
-                    task.dir,
-                    "review-pr",
-                    { prUrl: gitUrl, ...skillOpts },
-                  );
-                  if (!reviewTask) {
-                    toast.style = Toast.Style.Failure;
-                    toast.title = "No skill file configured";
-                    toast.message =
-                      "Please configure one via Manage Folders&Skills&Agents";
-                    return;
-                  }
-                  toast.style = Toast.Style.Success;
-                  toast.title = "PR review task started";
-                  push(
-                    <TaskDetail
-                      task={reviewTask}
-                      onRerunReview={async () => {
-                        const so = await getSkillOptionsForCommand("review-pr");
-                        const t = await launchTask(
-                          "review-pr",
-                          task.dir,
-                          "review-pr",
-                          { prUrl: gitUrl, ...so },
-                        );
-                        if (t) push(<TaskDetail task={t} />);
-                      }}
-                    />,
-                  );
-                } catch (error) {
-                  toast.style = Toast.Style.Failure;
-                  toast.title = "Failed to start PR review";
-                  toast.message =
-                    error instanceof Error ? error.message : String(error);
-                }
-              }}
-            />
-          )}
+          {task.command === "create-pr" &&
+            reviewShortcutState === "ready for review" &&
+            prOpen &&
+            gitUrl && (
+              <Action
+                title="Review Pr"
+                icon={Icon.MagnifyingGlass}
+                shortcut={{ modifiers: ["cmd", "shift"], key: "r" }}
+                onAction={() => void handleStartReview()}
+              />
+            )}
           <Action.CopyToClipboard
             title="Copy Output"
             content={displayOutput}
