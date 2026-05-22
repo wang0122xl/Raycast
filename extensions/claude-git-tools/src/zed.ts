@@ -69,3 +69,12 @@ export function openZedGitPanel(projectPath: string): boolean {
     return false;
   }
 }
+
+export function openZedProject(projectPath: string): boolean {
+  try {
+    spawnDetached(getZedCliCommand(), [projectPath]);
+    return true;
+  } catch {
+    return false;
+  }
+}

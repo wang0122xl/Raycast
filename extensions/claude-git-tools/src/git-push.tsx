@@ -22,6 +22,7 @@ function GitPushInner({ skill }: { skill: SkillConfig }) {
     });
     try {
       const task = await launchTask("git-push", fullPath, "git push", {
+        skillPath: skill.skillPath,
         skillName: skill.skillName,
         skillDir: skill.skillDir,
         agent: skill.agent,

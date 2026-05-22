@@ -5,15 +5,18 @@ import {
   readFileSync,
   existsSync,
   mkdirSync,
+  openSync,
+  readSync,
   readdirSync,
   statSync,
   unlinkSync,
+  closeSync,
 } from "fs";
 import { join } from "path";
 import { tmpdir, homedir } from "os";
 import {
   addTask,
-  getAgent,
+  getAgentForCommand,
   getClaudeModelForCommand,
   getCodexModelForCommand,
   getGeminiModelForCommand,
@@ -32,12 +35,14 @@ export type TaskCommand = "git-push" | "create-pr" | "review-pr";
 const TASK_DIR = join(tmpdir(), "claude-git-tools-tasks");
 const FORMATTER_FILE = join(TASK_DIR, "format-agent-output.js");
 const STALE_TASK_MAX_AGE_MS = 10 * 60 * 1000;
+const TASK_OUTPUT_PREVIEW_BYTES = 128 * 1024;
 
 let formatterWritten = false;
 
 interface TaskOptions {
   targetBranch?: string;
   prUrl?: string;
+  skillPath?: string;
   skillName?: string;
   skillDir?: string;
   agent?: Agent;
@@ -48,14 +53,20 @@ export function skillPathToName(path: string): string {
   return base.replace(/\.md$/i, "");
 }
 
-export async function getSkillOptionsForCommand(
-  command: TaskCommand,
-): Promise<{ skillName?: string; skillDir?: string; agent: Agent }> {
-  const [path, agent] = await Promise.all([getSkillPath(command), getAgent()]);
+export async function getSkillOptionsForCommand(command: TaskCommand): Promise<{
+  skillPath?: string;
+  skillName?: string;
+  skillDir?: string;
+  agent: Agent;
+}> {
+  const [path, agent] = await Promise.all([
+    getSkillPath(command),
+    getAgentForCommand(command),
+  ]);
   if (!path) return { agent };
   const name = skillPathToName(path);
   const dir = dirFromPath(path);
-  return { skillName: name, skillDir: dir, agent };
+  return { skillPath: path, skillName: name, skillDir: dir, agent };
 }
 
 function ensureTaskDir() {
@@ -83,6 +94,10 @@ function requireTargetBranch(options: TaskOptions): string {
 }
 
 function getSkillFile(options: TaskOptions): string {
+  if (options.skillPath && existsSync(options.skillPath)) {
+    return options.skillPath;
+  }
+
   if (options.skillDir && options.skillName) {
     const candidate = join(options.skillDir, `${options.skillName}.md`);
     if (existsSync(candidate)) {
@@ -227,8 +242,8 @@ function formatCommandLineForDisplay(commandLine: string): string {
   return commandLine.replace(/\r/g, "\\r").replace(/\n/g, "\\n");
 }
 
-function formatPromptPlaceholder(promptFile: string): string {
-  return `[prompt omitted; see ${promptFile}]`;
+function formatPromptPlaceholder(skillFile: string): string {
+  return `[prompt omitted; see ${skillFile}]`;
 }
 
 function getTaskFileId(name: string): string | null {
@@ -588,13 +603,101 @@ function isCodexNoise(text) {
   );
 }
 
+function stripCodexCodeSnippets(text) {
+  const fence = String.fromCharCode(96).repeat(3);
+  const fencedBlockPattern = new RegExp(fence + "[\\s\\S]*?" + fence, "g");
+  const replacements = [];
+  let nextText = text
+    .replace(fencedBlockPattern, (block) => {
+      replacements.push("[code block omitted: " + block.split("\n").length + " lines]");
+      return replacements[replacements.length - 1];
+    })
+    .replace(/\*\*\* Begin Patch[\s\S]*?\*\*\* End Patch/g, (block) => {
+      replacements.push("[patch omitted: " + block.split("\n").length + " lines]");
+      return replacements[replacements.length - 1];
+    });
+
+  const lines = nextText.split("\n");
+  const result = [];
+  let codeLines = [];
+
+  function flushCodeLines() {
+    if (codeLines.length >= 6) {
+      result.push("[code snippet omitted: " + codeLines.length + " lines]");
+    } else {
+      result.push(...codeLines);
+    }
+    codeLines = [];
+  }
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    const unnumbered = trimmed.replace(/^\d+\s+/, "");
+    const looksLikeCode =
+      /^\d+\s+\S/.test(trimmed) ||
+      /^@@\s+-\d+/.test(trimmed) ||
+      /^(diff --git|index [0-9a-f]+\.\.|--- |\+\+\+ )/.test(trimmed) ||
+      /^(import|export|const|let|var|function|class|interface|type|return|if|for|while|switch|case|try|catch)\b/.test(trimmed) ||
+      /^(class|module_path|kwargs|handler|dataset|segments|train|valid|test|record):\s*/.test(unnumbered) ||
+      /^[+\- ]{0,3}(import|export|const|let|var|function|class|interface|type|return)\b/.test(line) ||
+      /^[+\-]\s*\S/.test(line) ||
+      /^[+\- ]{0,3}[}\]);,]+$/.test(line) ||
+      /^[+\- ]{0,3}<\/?[A-Za-z][^>]*>$/.test(line);
+
+    if (looksLikeCode) {
+      codeLines.push(line);
+      continue;
+    }
+
+    flushCodeLines();
+    result.push(line);
+  }
+
+  flushCodeLines();
+
+  return result
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trimEnd();
+}
+
+function extractCodexUrls(text) {
+  const matches = text.match(/https:\/\/[^\s<>")}]*/g) || [];
+  return [...new Set(matches.map((url) => url.replace(/[.,;:)']*$/, "")))];
+}
+
+function isCodexSourceOutputCommand(command) {
+  return (
+    /\b(nl|cat)\b/.test(command) ||
+    /\bsed\b.*\b-n\b/.test(command) ||
+    /\bgit\s+(diff|show)\b/.test(command) ||
+    /\brg\b.*\b(-n|--line-number)\b/.test(command)
+  );
+}
+
+function formatCodexCommandOutput(command, output) {
+  if (!output.trim()) return "";
+
+  if (isCodexSourceOutputCommand(command)) {
+    const urls = extractCodexUrls(output);
+    return [
+      "[command output omitted: source/code content]",
+      ...urls,
+    ].join("\n") + "\n";
+  }
+
+  const filtered = stripCodexCodeSnippets(output);
+  return filtered.trim() ? filtered + "\n" : "";
+}
+
 function formatCodexItem(item, eventType) {
   if (!item || typeof item !== "object") return "";
 
   if (item.type === "agent_message") {
     const text = asText(item.text || item.content || item.message);
     if (!text.trim() || isCodexNoise(text)) return "";
-    return text.trimEnd() + "\n\n";
+    const filtered = stripCodexCodeSnippets(text);
+    return filtered.trim() ? filtered + "\n\n" : "";
   }
 
   if (item.type === "command_execution") {
@@ -608,7 +711,8 @@ function formatCodexItem(item, eventType) {
     }
 
     const output = asText(item.aggregated_output || item.output || item.stdout || item.stderr);
-    if (output.trim()) return output.trimEnd() + "\n";
+    const formattedOutput = formatCodexCommandOutput(command, output);
+    if (formattedOutput) return formattedOutput;
     if (item.exit_code && item.exit_code !== 0) {
       return "[exit " + item.exit_code + "]\n";
     }
@@ -623,7 +727,8 @@ function formatCodexItem(item, eventType) {
 
   const text = asText(item);
   if (!text.trim() || isCodexNoise(text)) return "";
-  return text.trimEnd() + "\n";
+  const filtered = stripCodexCodeSnippets(text);
+  return filtered.trim() ? filtered + "\n" : "";
 }
 
 function formatOpenCode(event) {
@@ -808,6 +913,41 @@ export function readTaskOutput(task: Task): string {
     return existsSync(task.outputFile)
       ? cleanTaskOutput(readFileSync(task.outputFile, "utf-8"))
       : "";
+  } catch {
+    return "";
+  }
+}
+
+export function readTaskOutputPreview(task: Task): string {
+  try {
+    if (!existsSync(task.outputFile)) return "";
+    const size = statSync(task.outputFile).size;
+    if (size <= TASK_OUTPUT_PREVIEW_BYTES) {
+      return cleanTaskOutput(readFileSync(task.outputFile, "utf-8"));
+    }
+
+    const fd = openSync(task.outputFile, "r");
+    try {
+      const buffer = Buffer.alloc(TASK_OUTPUT_PREVIEW_BYTES);
+      const start = Math.max(0, size - TASK_OUTPUT_PREVIEW_BYTES);
+      const bytesRead = readSync(
+        fd,
+        buffer,
+        0,
+        TASK_OUTPUT_PREVIEW_BYTES,
+        start,
+      );
+      const rawTail = buffer.subarray(0, bytesRead).toString("utf-8");
+      const tail = rawTail.replace(/^[^\n]*(\n|$)/, "");
+      const cleaned = cleanTaskOutput(tail);
+      return [
+        `[output truncated: showing last ${Math.round(TASK_OUTPUT_PREVIEW_BYTES / 1024)} KB of ${Math.round(size / 1024)} KB]`,
+        "",
+        cleaned,
+      ].join("\n");
+    } finally {
+      closeSync(fd);
+    }
   } catch {
     return "";
   }
@@ -1049,7 +1189,7 @@ export async function launchTask(
   writeFileSync(pidFile, "");
   writeFileSync(exitCodeFile, "");
 
-  const selectedAgent = options.agent || (await getAgent());
+  const selectedAgent = options.agent || (await getAgentForCommand(command));
   const branch = getCurrentBranch(dir);
   const task: Task = {
     id,
@@ -1098,7 +1238,9 @@ export async function launchTask(
         : selectedAgent === "opencode"
           ? buildOpenCodeCommand(promptFile)
           : buildGeminiCommand(promptFile, geminiModel);
-  const promptPlaceholder = formatPromptPlaceholder(promptFile);
+  const promptPlaceholder = formatPromptPlaceholder(
+    options.skillPath || skillFile,
+  );
   const displayCommand =
     selectedAgent === "opencode"
       ? buildOpenCodeCommandWithPrompt(promptPlaceholder)
@@ -1169,6 +1311,16 @@ cleanup_residual_processes() {
   fi
 }
 
+extract_first_markdown_url() {
+  local pattern="$1"
+  perl -ne 'while (/\\[[^\\]]*?\\]\\((https:\\/\\/[^)\\s]+)\\)/g) { print "$1\\n" }' "$OUTPUT_FILE" | grep -E "$pattern" | head -1 | sed "s/[.,;:)']*$//"
+}
+
+extract_last_markdown_url() {
+  local pattern="$1"
+  perl -ne 'while (/\\[[^\\]]*?\\]\\((https:\\/\\/[^)\\s]+)\\)/g) { print "$1\\n" }' "$OUTPUT_FILE" | grep -E "$pattern" | tail -1 | sed "s/[.,;:)']*$//"
+}
+
 ${agentCommand} 2>&1 | AGENT=${JSON.stringify(selectedAgent)} AGENT_MODEL=${JSON.stringify(agentModel)} node ${JSON.stringify(FORMATTER_FILE)} | tee -a ${JSON.stringify(outputFile)}
 EXIT_CODE=\${PIPESTATUS[0]}
 cleanup_residual_processes
@@ -1176,9 +1328,18 @@ cleanup_residual_processes
 if [ $EXIT_CODE -eq 0 ]; then
   OPEN_URL=""
   if [ "$TASK_COMMAND" = "create-pr" ]; then
-    OPEN_URL=$(grep -oE 'https://github\\.com/[^/]+/[^/]+/pull/[0-9]+' "$OUTPUT_FILE" | tail -1)
+    OPEN_URL=$(extract_last_markdown_url '^https://github\\.com/[^/]+/[^/]+/pull/[0-9]+$')
+    if [ -z "$OPEN_URL" ]; then
+      OPEN_URL=$(grep -oE 'https://github\\.com/[^/]+/[^/]+/pull/[0-9]+' "$OUTPUT_FILE" | tail -1)
+    fi
+    if [ -z "$OPEN_URL" ]; then
+      OPEN_URL=$(extract_last_markdown_url '^https://gitlab\\.com/[^[:space:]<>")}]*/-/(merge_requests)/[0-9]+$')
+    fi
     if [ -z "$OPEN_URL" ]; then
       OPEN_URL=$(grep -oE 'https://gitlab\\.com/[^[:space:]<>")}]*/-/(merge_requests)/[0-9]+' "$OUTPUT_FILE" | tail -1)
+    fi
+    if [ -z "$OPEN_URL" ]; then
+      OPEN_URL=$(extract_last_markdown_url '^https://bitbucket\\.org/[^[:space:]<>")}]*/pull-requests/[0-9]+$')
     fi
     if [ -z "$OPEN_URL" ]; then
       OPEN_URL=$(grep -oE 'https://bitbucket\\.org/[^[:space:]<>")}]*/pull-requests/[0-9]+' "$OUTPUT_FILE" | tail -1)
@@ -1193,9 +1354,18 @@ if [ $EXIT_CODE -eq 0 ]; then
     if [ -n "$TASK_PR_URL" ]; then
       OPEN_URL="$TASK_PR_URL"
     else
-      OPEN_URL=$(grep -oE 'https://github\\.com/[^/]+/[^/]+/pull/[0-9]+' "$OUTPUT_FILE" | head -1)
+      OPEN_URL=$(extract_first_markdown_url '^https://github\\.com/[^/]+/[^/]+/pull/[0-9]+$')
+      if [ -z "$OPEN_URL" ]; then
+        OPEN_URL=$(grep -oE 'https://github\\.com/[^/]+/[^/]+/pull/[0-9]+' "$OUTPUT_FILE" | head -1)
+      fi
+      if [ -z "$OPEN_URL" ]; then
+        OPEN_URL=$(extract_first_markdown_url '^https://gitlab\\.com/[^[:space:]<>")}]*/-/(merge_requests)/[0-9]+$')
+      fi
       if [ -z "$OPEN_URL" ]; then
         OPEN_URL=$(grep -oE 'https://gitlab\\.com/[^[:space:]<>")}]*/-/(merge_requests)/[0-9]+' "$OUTPUT_FILE" | head -1)
+      fi
+      if [ -z "$OPEN_URL" ]; then
+        OPEN_URL=$(extract_first_markdown_url '^https://bitbucket\\.org/[^[:space:]<>")}]*/pull-requests/[0-9]+$')
       fi
       if [ -z "$OPEN_URL" ]; then
         OPEN_URL=$(grep -oE 'https://bitbucket\\.org/[^[:space:]<>")}]*/pull-requests/[0-9]+' "$OUTPUT_FILE" | head -1)
@@ -1218,9 +1388,18 @@ if [ $EXIT_CODE -eq 0 ]; then
       fi
     fi
   elif [ "$TASK_COMMAND" = "git-push" ]; then
-    OPEN_URL=$(grep -oE 'https://(github\\.com|gitlab\\.com)/[^[:space:]<>")}]+/commit/[0-9a-f]+' "$OUTPUT_FILE" | head -1)
+    OPEN_URL=$(extract_first_markdown_url '^https://(github\\.com|gitlab\\.com)/[^[:space:]<>")}]+/commit/[0-9a-f]+$')
+    if [ -z "$OPEN_URL" ]; then
+      OPEN_URL=$(grep -oE 'https://(github\\.com|gitlab\\.com)/[^[:space:]<>")}]+/commit/[0-9a-f]+' "$OUTPUT_FILE" | head -1)
+    fi
+    if [ -z "$OPEN_URL" ]; then
+      OPEN_URL=$(extract_first_markdown_url '^https://bitbucket\\.org/[^[:space:]<>")}]+/commits/[0-9a-f]+$')
+    fi
     if [ -z "$OPEN_URL" ]; then
       OPEN_URL=$(grep -oE 'https://bitbucket\\.org/[^[:space:]<>")}]+/commits/[0-9a-f]+' "$OUTPUT_FILE" | head -1)
+    fi
+    if [ -z "$OPEN_URL" ]; then
+      OPEN_URL=$(extract_last_markdown_url '^https://(github\\.com|gitlab\\.com|bitbucket\\.org)/[^[:space:]<>")}]+' )
     fi
     if [ -z "$OPEN_URL" ]; then
       OPEN_URL=$(grep -oE 'https://(github\\.com|gitlab\\.com|bitbucket\\.org)/[^[:space:]<>")}]+' "$OUTPUT_FILE" | tail -1 | sed "s/[.,;:)']*$//")

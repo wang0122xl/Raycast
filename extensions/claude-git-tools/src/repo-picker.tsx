@@ -1,9 +1,12 @@
 import {
   Action,
   ActionPanel,
+  Alert,
   Color,
   Icon,
   List,
+  confirmAlert,
+  open,
   showToast,
   Toast,
   useNavigation,
@@ -12,8 +15,9 @@ import { useState, useEffect, useCallback } from "react";
 import {
   getDirHistory,
   addDirHistory,
-  removeDirHistory,
   addFolder,
+  getHiddenRepos,
+  hideRepo,
 } from "./storage";
 import {
   getAllGitRepos,
@@ -25,7 +29,7 @@ import {
   type GitFileStatus,
   type GitWorkspaceStatus,
 } from "./git-utils";
-import { openZedGitPanel } from "./zed";
+import { openZedGitPanel, openZedProject } from "./zed";
 
 interface RepoPickerProps {
   primaryActionTitle: string;
@@ -49,12 +53,20 @@ export function RepoPicker({ primaryActionTitle, onSelect }: RepoPickerProps) {
 
   const refresh = useCallback(async () => {
     setIsLoading(true);
-    const [h, r] = await Promise.all([getDirHistory(), getAllGitRepos()]);
-    setHistory(h);
+    const [h, r, hiddenRepos] = await Promise.all([
+      getDirHistory(),
+      getAllGitRepos(),
+      getHiddenRepos(),
+    ]);
+    const hiddenRepoSet = new Set(hiddenRepos);
+    const visibleHistory = h.filter((dir) => !hiddenRepoSet.has(dir));
+    setHistory(visibleHistory);
     setRepos(r);
     setIsLoading(false);
 
-    const dirs = [...new Set([...h, ...r.map((repo) => repo.fullPath)])];
+    const dirs = [
+      ...new Set([...visibleHistory, ...r.map((repo) => repo.fullPath)]),
+    ];
     setStatusByDir({});
     if (dirs.length === 0) {
       setIsStatusLoading(false);
@@ -102,6 +114,29 @@ export function RepoPicker({ primaryActionTitle, onSelect }: RepoPickerProps) {
     );
   }
 
+  async function handleOpenInFinder(fullPath: string) {
+    try {
+      await open(fullPath);
+    } catch (error) {
+      await showToast({
+        style: Toast.Style.Failure,
+        title: "Failed to open directory",
+        message: error instanceof Error ? error.message : fullPath,
+      });
+    }
+  }
+
+  async function handleOpenInZed(fullPath: string) {
+    const started = openZedProject(fullPath);
+    if (!started) {
+      await showToast({
+        style: Toast.Style.Failure,
+        title: "Failed to start Zed",
+        message: fullPath,
+      });
+    }
+  }
+
   async function handleAddFolder() {
     const selected = await pickFolderDialog();
     if (selected) {
@@ -113,6 +148,36 @@ export function RepoPicker({ primaryActionTitle, onSelect }: RepoPickerProps) {
         message: selected,
       });
     }
+  }
+
+  async function handleRemoveFromList(fullPath: string) {
+    const confirmed = await confirmAlert({
+      title: "Remove this directory from the list?",
+      message:
+        "You will not be able to search this directory after removal. To show it again, add the folder again from the Manage Folders command.",
+      primaryAction: {
+        title: "Remove",
+        style: Alert.ActionStyle.Destructive,
+      },
+      dismissAction: { title: "Cancel" },
+    });
+    if (!confirmed) return;
+
+    await hideRepo(fullPath);
+    await refresh();
+    await showToast({
+      style: Toast.Style.Success,
+      title: "Removed from list",
+      message: fullPath,
+    });
+  }
+
+  async function handleRefreshScan() {
+    await refresh();
+    await showToast({
+      style: Toast.Style.Success,
+      title: "Scan refreshed",
+    });
   }
 
   const noRepos = !isLoading && repos.length === 0 && history.length === 0;
@@ -184,6 +249,12 @@ export function RepoPicker({ primaryActionTitle, onSelect }: RepoPickerProps) {
     return accessories;
   }
 
+  function getBranchSubtitle(status: GitWorkspaceStatus | null | undefined) {
+    if (status === undefined) return "(...)";
+    if (status === null) return "(?)";
+    return `(${status.branch})`;
+  }
+
   return (
     <List
       isLoading={isLoading || isStatusLoading}
@@ -203,6 +274,12 @@ export function RepoPicker({ primaryActionTitle, onSelect }: RepoPickerProps) {
                 icon={Icon.Plus}
                 onAction={handleAddFolder}
               />
+              <Action
+                title="Refresh Scan"
+                icon={Icon.ArrowClockwise}
+                shortcut={{ modifiers: ["cmd"], key: "r" }}
+                onAction={handleRefreshScan}
+              />
             </ActionPanel>
           }
         />
@@ -218,7 +295,7 @@ export function RepoPicker({ primaryActionTitle, onSelect }: RepoPickerProps) {
                     key={`recent-${dir}`}
                     icon={Icon.Clock}
                     title={display}
-                    subtitle={`(${dir})`}
+                    subtitle={getBranchSubtitle(statusByDir[dir])}
                     accessories={getWorkspaceStatusAccessories(
                       statusByDir[dir],
                     )}
@@ -235,14 +312,29 @@ export function RepoPicker({ primaryActionTitle, onSelect }: RepoPickerProps) {
                           onAction={() => handleViewDiff(dir)}
                         />
                         <Action
-                          title="Remove from History"
+                          title="Open in Finder"
+                          icon={Icon.Finder}
+                          shortcut={{ modifiers: ["cmd"], key: "o" }}
+                          onAction={() => void handleOpenInFinder(dir)}
+                        />
+                        <Action
+                          title="Open in Zed"
+                          icon={Icon.Code}
+                          shortcut={{ modifiers: ["cmd", "shift"], key: "o" }}
+                          onAction={() => void handleOpenInZed(dir)}
+                        />
+                        <Action
+                          title="Refresh Scan"
+                          icon={Icon.ArrowClockwise}
+                          shortcut={{ modifiers: ["cmd"], key: "r" }}
+                          onAction={handleRefreshScan}
+                        />
+                        <Action
+                          title="Remove from List"
                           icon={Icon.Trash}
                           style={Action.Style.Destructive}
                           shortcut={{ modifiers: ["cmd"], key: "d" }}
-                          onAction={async () => {
-                            await removeDirHistory(dir);
-                            await refresh();
-                          }}
+                          onAction={() => handleRemoveFromList(dir)}
                         />
                       </ActionPanel>
                     }
@@ -257,7 +349,7 @@ export function RepoPicker({ primaryActionTitle, onSelect }: RepoPickerProps) {
                 key={repo.fullPath}
                 icon={Icon.Folder}
                 title={repo.displayName}
-                subtitle={`(${repo.fullPath})`}
+                subtitle={getBranchSubtitle(statusByDir[repo.fullPath])}
                 accessories={getWorkspaceStatusAccessories(
                   statusByDir[repo.fullPath],
                 )}
@@ -272,6 +364,31 @@ export function RepoPicker({ primaryActionTitle, onSelect }: RepoPickerProps) {
                       icon={Icon.Code}
                       shortcut={{ modifiers: ["cmd"], key: "enter" }}
                       onAction={() => handleViewDiff(repo.fullPath)}
+                    />
+                    <Action
+                      title="Open in Finder"
+                      icon={Icon.Finder}
+                      shortcut={{ modifiers: ["cmd"], key: "o" }}
+                      onAction={() => void handleOpenInFinder(repo.fullPath)}
+                    />
+                    <Action
+                      title="Open in Zed"
+                      icon={Icon.Code}
+                      shortcut={{ modifiers: ["cmd", "shift"], key: "o" }}
+                      onAction={() => void handleOpenInZed(repo.fullPath)}
+                    />
+                    <Action
+                      title="Refresh Scan"
+                      icon={Icon.ArrowClockwise}
+                      shortcut={{ modifiers: ["cmd"], key: "r" }}
+                      onAction={handleRefreshScan}
+                    />
+                    <Action
+                      title="Remove from List"
+                      icon={Icon.Trash}
+                      style={Action.Style.Destructive}
+                      shortcut={{ modifiers: ["cmd"], key: "d" }}
+                      onAction={() => handleRemoveFromList(repo.fullPath)}
                     />
                   </ActionPanel>
                 }

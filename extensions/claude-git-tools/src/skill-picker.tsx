@@ -8,7 +8,7 @@ import {
 } from "@raycast/api";
 import { useState, useEffect } from "react";
 import {
-  getAgent,
+  getAgentForCommand,
   getSkillPath,
   setSkillPath,
   type Agent,
@@ -61,6 +61,7 @@ end run
 export { pickSkillFile };
 
 export interface SkillConfig {
+  skillPath: string;
   skillName: string;
   skillDir: string;
   agent: Agent;
@@ -79,7 +80,7 @@ export function SkillGate({ command, children }: SkillGateProps) {
     (async () => {
       const [path, agent] = await Promise.all([
         getSkillPath(command),
-        getAgent(),
+        getAgentForCommand(command),
       ]);
       if (path) {
         setConfig(skillPathToConfig(path, agent));
@@ -104,7 +105,7 @@ export function SkillGate({ command, children }: SkillGateProps) {
 function skillPathToConfig(path: string, agent: Agent): SkillConfig {
   const name = skillPathToName(path);
   const dir = dirFromPath(path);
-  return { skillName: name, skillDir: dir, agent };
+  return { skillPath: path, skillName: name, skillDir: dir, agent };
 }
 
 function SkillPrompt({
@@ -134,7 +135,7 @@ function SkillPrompt({
       style: Toast.Style.Success,
       title: `Skill configured: /${name}`,
     });
-    onConfigured(skillPathToConfig(path, await getAgent()));
+    onConfigured(skillPathToConfig(path, await getAgentForCommand(command)));
   }
 
   return (

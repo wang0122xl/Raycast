@@ -60,6 +60,7 @@ function BranchPicker({
     try {
       const task = await launchTask("create-pr", dirPath, "create-pr", {
         targetBranch: branch,
+        skillPath: skill.skillPath,
         skillName: skill.skillName,
         skillDir: skill.skillDir,
         agent: skill.agent,

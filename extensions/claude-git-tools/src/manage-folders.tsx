@@ -14,8 +14,8 @@ import {
   getSkillPath,
   setSkillPath,
   removeSkillPath,
-  getAgent,
-  setAgent,
+  getAgentForCommand,
+  setAgentForCommand,
   type Agent,
   type SkillCommand,
 } from "./storage";
@@ -42,20 +42,31 @@ export default function ManageFolders() {
     "create-pr": null,
     "review-pr": null,
   });
-  const [agent, setSelectedAgent] = useState<Agent>("claude");
+  const [agents, setAgents] = useState<Record<SkillCommand, Agent>>({
+    "git-push": "claude",
+    "create-pr": "claude",
+    "review-pr": "claude",
+  });
   const [isLoading, setIsLoading] = useState(true);
 
   const refresh = useCallback(async () => {
-    const [f, gp, cp, rp, selectedAgent] = await Promise.all([
-      getFolders(),
-      getSkillPath("git-push"),
-      getSkillPath("create-pr"),
-      getSkillPath("review-pr"),
-      getAgent(),
-    ]);
+    const [f, gp, cp, rp, gitPushAgent, createPrAgent, reviewPrAgent] =
+      await Promise.all([
+        getFolders(),
+        getSkillPath("git-push"),
+        getSkillPath("create-pr"),
+        getSkillPath("review-pr"),
+        getAgentForCommand("git-push"),
+        getAgentForCommand("create-pr"),
+        getAgentForCommand("review-pr"),
+      ]);
     setFolders(f);
     setSkills({ "git-push": gp, "create-pr": cp, "review-pr": rp });
-    setSelectedAgent(selectedAgent);
+    setAgents({
+      "git-push": gitPushAgent,
+      "create-pr": createPrAgent,
+      "review-pr": reviewPrAgent,
+    });
     setIsLoading(false);
   }, []);
 
@@ -175,31 +186,42 @@ export default function ManageFolders() {
         })}
       </List.Section>
       <List.Section title="Agent">
-        {AGENTS.map(({ value, label }) => (
-          <List.Item
-            key={value}
-            icon={agent === value ? Icon.CheckCircle : Icon.Circle}
-            title={label}
-            accessories={[{ text: agent === value ? "Selected" : "" }]}
-            actions={
-              <ActionPanel>
-                <Action
-                  title={`Select ${label}`}
-                  icon={Icon.CheckCircle}
-                  onAction={async () => {
-                    await setAgent(value);
-                    await refresh();
-                    await showToast({
-                      style: Toast.Style.Success,
-                      title: "Agent selected",
-                      message: label,
-                    });
-                  }}
-                />
-              </ActionPanel>
-            }
-          />
-        ))}
+        {SKILL_COMMANDS.map(({ command, label }) => {
+          const selectedAgent = agents[command];
+          const selectedAgentLabel =
+            AGENTS.find((item) => item.value === selectedAgent)?.label ||
+            "Claude";
+          return (
+            <List.Item
+              key={command}
+              icon={Icon.Terminal}
+              title={`Agent - ${label}`}
+              accessories={[{ text: selectedAgentLabel }]}
+              actions={
+                <ActionPanel>
+                  {AGENTS.map(({ value, label: agentLabel }) => (
+                    <Action
+                      key={value}
+                      title={`Select ${agentLabel}`}
+                      icon={
+                        selectedAgent === value ? Icon.CheckCircle : Icon.Circle
+                      }
+                      onAction={async () => {
+                        await setAgentForCommand(command, value);
+                        await refresh();
+                        await showToast({
+                          style: Toast.Style.Success,
+                          title: "Agent selected",
+                          message: `${label}: ${agentLabel}`,
+                        });
+                      }}
+                    />
+                  ))}
+                </ActionPanel>
+              }
+            />
+          );
+        })}
       </List.Section>
     </List>
   );

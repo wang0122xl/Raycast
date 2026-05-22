@@ -2,7 +2,7 @@ import { readdirSync, existsSync, statSync } from "fs";
 import { join, basename } from "path";
 import { execFileSync, execFile } from "child_process";
 import { homedir } from "os";
-import { getFolders } from "./storage";
+import { getFolders, getHiddenRepos } from "./storage";
 
 export const EXTENDED_PATH = `${homedir()}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:${process.env.PATH || ""}`;
 
@@ -12,6 +12,7 @@ interface GitRepo {
 }
 
 export interface GitWorkspaceStatus {
+  branch: string;
   changed: number;
   untracked: number;
   conflicted: number;
@@ -75,12 +76,16 @@ function scanForGitRepos(baseDir: string, maxDepth: number): GitRepo[] {
 }
 
 export async function getAllGitRepos(): Promise<GitRepo[]> {
-  const folders = await getFolders();
+  const [folders, hiddenRepos] = await Promise.all([
+    getFolders(),
+    getHiddenRepos(),
+  ]);
+  const hiddenRepoSet = new Set(hiddenRepos);
   const seen = new Set<string>();
   const repos: GitRepo[] = [];
   for (const folder of folders) {
     for (const repo of scanForGitRepos(folder, 3)) {
-      if (!seen.has(repo.fullPath)) {
+      if (!hiddenRepoSet.has(repo.fullPath) && !seen.has(repo.fullPath)) {
         seen.add(repo.fullPath);
         repos.push(repo);
       }
@@ -116,6 +121,16 @@ function parseAheadBehind(branchLine: string) {
     ahead: aheadMatch ? Number(aheadMatch[1]) : 0,
     behind: behindMatch ? Number(behindMatch[1]) : 0,
   };
+}
+
+function parseBranchName(branchLine: string) {
+  const raw = branchLine.replace(/^##\s+/, "").trim();
+  const branch = raw
+    .replace(/^No commits yet on /, "")
+    .split("...")[0]
+    .split(" [")[0]
+    .trim();
+  return branch || "unknown";
 }
 
 function isConflictedStatus(status: string) {
@@ -163,12 +178,14 @@ export function getGitWorkspaceStatus(
         let changed = 0;
         let untracked = 0;
         let conflicted = 0;
+        let branch = "unknown";
         let ahead = 0;
         let behind = 0;
 
         for (const line of stdout.split("\n")) {
           if (!line) continue;
           if (line.startsWith("## ")) {
+            branch = parseBranchName(line);
             ({ ahead, behind } = parseAheadBehind(line));
             continue;
           }
@@ -183,7 +200,7 @@ export function getGitWorkspaceStatus(
           }
         }
 
-        resolve({ changed, untracked, conflicted, ahead, behind });
+        resolve({ branch, changed, untracked, conflicted, ahead, behind });
       },
     );
   });

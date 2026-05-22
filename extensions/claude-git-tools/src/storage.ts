@@ -2,6 +2,7 @@ import { LocalStorage } from "@raycast/api";
 
 const CONFIGURED_FOLDERS_KEY = "configured-folders";
 const DIR_HISTORY_KEY = "dir-history";
+const HIDDEN_REPOS_KEY = "hidden-repos";
 const BRANCH_HISTORY_PREFIX = "branch-history:";
 const TASKS_KEY = "tasks";
 const MODEL_KEY = "selected-model";
@@ -10,6 +11,7 @@ const GEMINI_MODEL_KEY = "selected-gemini-model";
 const MODEL_COMMAND_KEY = "selected-model-command";
 const COMMAND_MODEL_PREFIX = "selected-model:";
 const AGENT_KEY = "selected-agent";
+const COMMAND_AGENT_PREFIX = "selected-agent:";
 const SKILL_PREFIX = "skill-";
 
 export type ClaudeModel = "haiku" | "sonnet" | "opus";
@@ -61,6 +63,15 @@ async function setJsonArray<T>(key: string, arr: T[]) {
   await LocalStorage.setItem(key, JSON.stringify(arr));
 }
 
+function isPathInFolder(path: string, folder: string) {
+  const normalizedPath = path.replace(/\/+$/, "");
+  const normalizedFolder = folder.replace(/\/+$/, "");
+  return (
+    normalizedPath === normalizedFolder ||
+    normalizedPath.startsWith(`${normalizedFolder}/`)
+  );
+}
+
 export async function getFolders(): Promise<string[]> {
   return getJsonArray(CONFIGURED_FOLDERS_KEY);
 }
@@ -70,6 +81,7 @@ export async function addFolder(path: string) {
   if (!folders.includes(path)) {
     await setJsonArray(CONFIGURED_FOLDERS_KEY, [...folders, path]);
   }
+  await unhideReposUnderFolder(path);
 }
 
 export async function removeFolder(path: string) {
@@ -95,6 +107,32 @@ export async function removeDirHistory(dir: string) {
   await setJsonArray(
     DIR_HISTORY_KEY,
     history.filter((d) => d !== dir),
+  );
+}
+
+export async function getHiddenRepos(): Promise<string[]> {
+  return getJsonArray(HIDDEN_REPOS_KEY);
+}
+
+export async function hideRepo(dir: string) {
+  const [hiddenRepos, history] = await Promise.all([
+    getHiddenRepos(),
+    getDirHistory(),
+  ]);
+  if (!hiddenRepos.includes(dir)) {
+    await setJsonArray(HIDDEN_REPOS_KEY, [...hiddenRepos, dir]);
+  }
+  await setJsonArray(
+    DIR_HISTORY_KEY,
+    history.filter((d) => d !== dir),
+  );
+}
+
+async function unhideReposUnderFolder(folder: string) {
+  const hiddenRepos = await getHiddenRepos();
+  await setJsonArray(
+    HIDDEN_REPOS_KEY,
+    hiddenRepos.filter((repo) => !isPathInFolder(repo, folder)),
   );
 }
 
@@ -270,6 +308,32 @@ export async function getAgent(): Promise<Agent> {
 
 export async function setAgent(agent: Agent) {
   await LocalStorage.setItem(AGENT_KEY, agent);
+}
+
+function commandAgentKey(command: SkillCommand): string {
+  return `${COMMAND_AGENT_PREFIX}${command}`;
+}
+
+export async function getAgentForCommand(
+  command: SkillCommand,
+): Promise<Agent> {
+  const raw = await LocalStorage.getItem<string>(commandAgentKey(command));
+  if (
+    raw === "claude" ||
+    raw === "codex" ||
+    raw === "opencode" ||
+    raw === "gemini"
+  ) {
+    return raw;
+  }
+  return DEFAULT_AGENT;
+}
+
+export async function setAgentForCommand(
+  command: SkillCommand,
+  agent: Agent,
+): Promise<void> {
+  await LocalStorage.setItem(commandAgentKey(command), agent);
 }
 
 export async function getSkillPath(

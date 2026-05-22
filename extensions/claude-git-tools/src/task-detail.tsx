@@ -3,9 +3,11 @@ import {
   ActionPanel,
   Alert,
   closeMainWindow,
+  Clipboard,
   confirmAlert,
   Detail,
   Icon,
+  List,
   open,
   PopToRootType,
   showToast,
@@ -19,6 +21,7 @@ import {
   getSkillOptionsForCommand,
   launchTask,
   readTaskOutput,
+  readTaskOutputPreview,
   stopTask,
 } from "./task-manager";
 import {
@@ -61,15 +64,47 @@ async function checkPrOpen(prUrl: string, dir: string): Promise<boolean> {
 }
 
 const REFRESH_INTERVAL_MS = 1000;
-const LATEST_OUTPUT_LINE_LIMIT = 6;
+const LATEST_OUTPUT_LINE_LIMIT = 11;
 const EMPTY_OUTPUT_TEXT = "(waiting for output...)";
 const REVIEW_REPORT_DELIMITER = "!--------!";
 const CREATE_PR_FINAL_RESPONSE_START = "CREATE_PR_FINAL_RESPONSE_BEGIN";
 const CREATE_PR_FINAL_RESPONSE_END = "CREATE_PR_FINAL_RESPONSE_END";
 
+export interface ReviewReportEntry {
+  id: string;
+  markdown: string;
+  createdAt: number;
+}
+
 function extractLastMatch(text: string, pattern: RegExp): string | null {
   const matches = [...text.matchAll(pattern)];
   return matches.length > 0 ? matches[matches.length - 1][0] : null;
+}
+
+function normalizeExtractedUrl(url: string): string {
+  return url.replace(/[.,;:)']*$/, "");
+}
+
+function extractMarkdownLinkTargets(text: string, pattern: RegExp): string[] {
+  const markdownLinkPattern = /\[[^\]]*?\]\((https:\/\/[^)\s]+)\)/gs;
+  return [...text.matchAll(markdownLinkPattern)]
+    .map((match) => normalizeExtractedUrl(match[1] || ""))
+    .filter((url) => pattern.test(url));
+}
+
+function extractFirstMarkdownLinkTarget(
+  text: string,
+  pattern: RegExp,
+): string | null {
+  return extractMarkdownLinkTargets(text, pattern)[0] || null;
+}
+
+function extractLastMarkdownLinkTarget(
+  text: string,
+  pattern: RegExp,
+): string | null {
+  const matches = extractMarkdownLinkTargets(text, pattern);
+  return matches.length > 0 ? matches[matches.length - 1] : null;
 }
 
 function extractCreatePrFinalUrl(output: string): string | null {
@@ -81,6 +116,18 @@ function extractCreatePrFinalUrl(output: string): string | null {
   for (const block of blocks.reverse()) {
     const content = block[1] || "";
     const url =
+      extractLastMarkdownLinkTarget(
+        content,
+        /^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/[0-9]+$/,
+      ) ||
+      extractLastMarkdownLinkTarget(
+        content,
+        /^https:\/\/gitlab\.com\/[^\s<>")']+\/-\/merge_requests\/[0-9]+$/,
+      ) ||
+      extractLastMarkdownLinkTarget(
+        content,
+        /^https:\/\/bitbucket\.org\/[^\s<>")']+\/pull-requests\/[0-9]+$/,
+      ) ||
       extractLastMatch(
         content,
         /https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/[0-9]+/g,
@@ -99,13 +146,37 @@ function extractCreatePrFinalUrl(output: string): string | null {
 }
 
 export function extractReviewReport(output: string): string | null {
-  const startIdx = output.indexOf(REVIEW_REPORT_DELIMITER);
-  if (startIdx === -1) return null;
-  const contentStart = startIdx + REVIEW_REPORT_DELIMITER.length;
-  const endIdx = output.indexOf(REVIEW_REPORT_DELIMITER, contentStart);
-  if (endIdx === -1) return null;
-  const content = output.slice(contentStart, endIdx).trim();
-  return content || null;
+  return extractReviewReports(output)[0]?.markdown ?? null;
+}
+
+export function extractReviewReports(
+  output: string,
+  baseCreatedAt = 0,
+): ReviewReportEntry[] {
+  const reports: ReviewReportEntry[] = [];
+  let searchStart = 0;
+
+  while (searchStart < output.length) {
+    const startIdx = output.indexOf(REVIEW_REPORT_DELIMITER, searchStart);
+    if (startIdx === -1) break;
+
+    const contentStart = startIdx + REVIEW_REPORT_DELIMITER.length;
+    const endIdx = output.indexOf(REVIEW_REPORT_DELIMITER, contentStart);
+    if (endIdx === -1) break;
+
+    const markdown = output.slice(contentStart, endIdx).trim();
+    if (markdown) {
+      reports.push({
+        id: `${baseCreatedAt}:${startIdx}:${endIdx}`,
+        markdown,
+        createdAt: baseCreatedAt + reports.length,
+      });
+    }
+
+    searchStart = endIdx + REVIEW_REPORT_DELIMITER.length;
+  }
+
+  return reports.sort((a, b) => b.createdAt - a.createdAt);
 }
 
 export function fallbackReviewReport(task: Task): string | null {
@@ -124,29 +195,50 @@ export function fallbackReviewReport(task: Task): string | null {
   ].join("\n");
 }
 
-async function findLocalReviewReport(
+function getReviewReportEntriesFromTask(task: Task): ReviewReportEntry[] {
+  const reports = extractReviewReports(readTaskOutput(task), task.startTime);
+  if (reports.length > 0) return reports;
+
+  const fallback = fallbackReviewReport(task);
+  return fallback
+    ? [
+        {
+          id: `${task.id}:fallback`,
+          markdown: fallback,
+          createdAt: task.startTime,
+        },
+      ]
+    : [];
+}
+
+async function findLocalReviewReports(
   prUrl: string,
-  dir: string,
-): Promise<string | null> {
+): Promise<ReviewReportEntry[]> {
   const tasks = await getTasks();
   const completedReviewTasks = tasks
     .filter(
       (item) =>
         item.command === "review-pr" &&
         item.prUrl === prUrl &&
-        item.dir === dir &&
         item.status === "completed",
     )
     .sort((a, b) => b.startTime - a.startTime);
 
-  for (const reviewTask of completedReviewTasks) {
-    const report =
-      extractReviewReport(readTaskOutput(reviewTask)) ||
-      fallbackReviewReport(reviewTask);
-    if (report) return report;
+  return completedReviewTasks
+    .flatMap(getReviewReportEntriesFromTask)
+    .sort((a, b) => b.createdAt - a.createdAt);
+}
+
+function mergeReviewReportEntries(
+  ...groups: ReviewReportEntry[][]
+): ReviewReportEntry[] {
+  const byId = new Map<string, ReviewReportEntry>();
+
+  for (const report of groups.flat()) {
+    byId.set(report.id, report);
   }
 
-  return null;
+  return [...byId.values()].sort((a, b) => b.createdAt - a.createdAt);
 }
 
 function getStatusLabel(status: Task["status"]): string {
@@ -165,11 +257,6 @@ function getStatusLabel(status: Task["status"]): string {
 
 function escapeCodeFence(text: string): string {
   return text.replace(/```/g, "'''");
-}
-
-function getOutputText(output: string): string {
-  const trimmedOutput = output.trimEnd();
-  return trimmedOutput || EMPTY_OUTPUT_TEXT;
 }
 
 function getLatestOutputText(output: string): string {
@@ -199,6 +286,18 @@ export function extractGitUrl(task: Task, output: string): string | null {
   if (task.command === "create-pr") {
     url =
       extractCreatePrFinalUrl(output) ||
+      extractLastMarkdownLinkTarget(
+        output,
+        /^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/[0-9]+$/,
+      ) ||
+      extractLastMarkdownLinkTarget(
+        output,
+        /^https:\/\/gitlab\.com\/[^\s<>")']+\/-\/merge_requests\/[0-9]+$/,
+      ) ||
+      extractLastMarkdownLinkTarget(
+        output,
+        /^https:\/\/bitbucket\.org\/[^\s<>")']+\/pull-requests\/[0-9]+$/,
+      ) ||
       extractLastMatch(
         output,
         /https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/[0-9]+/g,
@@ -214,48 +313,89 @@ export function extractGitUrl(task: Task, output: string): string | null {
   }
 
   if (task.command === "review-pr") {
-    const githubMatch = output.match(
-      /https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/[0-9]+/,
-    );
-    if (githubMatch) {
-      url = githubMatch[0];
+    url =
+      extractFirstMarkdownLinkTarget(
+        output,
+        /^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/[0-9]+$/,
+      ) || url;
+
+    if (!url) {
+      const githubMatch = output.match(
+        /https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/[0-9]+/,
+      );
+      if (githubMatch) {
+        url = githubMatch[0];
+      }
     }
 
     if (!url) {
-      const gitlabMatch = output.match(
-        /https:\/\/gitlab\.com\/[^\s<>")']+\/-\/merge_requests\/[0-9]+/,
-      );
-      if (gitlabMatch) url = gitlabMatch[0];
+      url =
+        extractFirstMarkdownLinkTarget(
+          output,
+          /^https:\/\/gitlab\.com\/[^\s<>")']+\/-\/merge_requests\/[0-9]+$/,
+        ) || null;
+      if (!url) {
+        const gitlabMatch = output.match(
+          /https:\/\/gitlab\.com\/[^\s<>")']+\/-\/merge_requests\/[0-9]+/,
+        );
+        if (gitlabMatch) url = gitlabMatch[0];
+      }
     }
 
     if (!url) {
-      const bitbucketMatch = output.match(
-        /https:\/\/bitbucket\.org\/[^\s<>")']+\/pull-requests\/[0-9]+/,
-      );
-      if (bitbucketMatch) url = bitbucketMatch[0];
+      url =
+        extractFirstMarkdownLinkTarget(
+          output,
+          /^https:\/\/bitbucket\.org\/[^\s<>")']+\/pull-requests\/[0-9]+$/,
+        ) || null;
+      if (!url) {
+        const bitbucketMatch = output.match(
+          /https:\/\/bitbucket\.org\/[^\s<>")']+\/pull-requests\/[0-9]+/,
+        );
+        if (bitbucketMatch) url = bitbucketMatch[0];
+      }
     }
   }
   if (task.command === "git-push") {
-    const commitMatch = output.match(
-      /https:\/\/(github\.com|gitlab\.com)\/[^\s<>")']+\/commit\/[0-9a-f]+/,
+    url = extractFirstMarkdownLinkTarget(
+      output,
+      /^https:\/\/(github\.com|gitlab\.com)\/[^\s<>")']+\/commit\/[0-9a-f]+$/,
     );
-    if (commitMatch) {
-      url = commitMatch[0];
+
+    if (!url) {
+      const commitMatch = output.match(
+        /https:\/\/(github\.com|gitlab\.com)\/[^\s<>")']+\/commit\/[0-9a-f]+/,
+      );
+      if (commitMatch) {
+        url = commitMatch[0];
+      }
     }
 
     if (!url) {
-      const bitbucketCommitMatch = output.match(
-        /https:\/\/bitbucket\.org\/[^\s<>")']+\/commits\/[0-9a-f]+/,
+      url = extractFirstMarkdownLinkTarget(
+        output,
+        /^https:\/\/bitbucket\.org\/[^\s<>")']+\/commits\/[0-9a-f]+$/,
       );
-      if (bitbucketCommitMatch) url = bitbucketCommitMatch[0];
+      if (!url) {
+        const bitbucketCommitMatch = output.match(
+          /https:\/\/bitbucket\.org\/[^\s<>")']+\/commits\/[0-9a-f]+/,
+        );
+        if (bitbucketCommitMatch) url = bitbucketCommitMatch[0];
+      }
     }
 
     if (!url) {
-      const gitHostMatch = output.match(
-        /https:\/\/(github\.com|gitlab\.com|bitbucket\.org)\/[^\s<>")']+/g,
+      url = extractLastMarkdownLinkTarget(
+        output,
+        /^https:\/\/(github\.com|gitlab\.com|bitbucket\.org)\/[^\s<>")']+$/,
       );
-      if (gitHostMatch) {
-        url = gitHostMatch[gitHostMatch.length - 1].replace(/[.,;:)']*$/, "");
+      if (!url) {
+        const gitHostMatch = output.match(
+          /https:\/\/(github\.com|gitlab\.com|bitbucket\.org)\/[^\s<>")']+/g,
+        );
+        if (gitHostMatch) {
+          url = normalizeExtractedUrl(gitHostMatch[gitHostMatch.length - 1]);
+        }
       }
     }
 
@@ -302,11 +442,16 @@ function formatMetadataLine(task: Task): string {
 }
 
 function sanitizeCommandLine(commandLine: string): string {
+  const sanitizePrompt = (match: string, prefix: string, prompt: string) =>
+    prompt.startsWith("[prompt omitted; see ")
+      ? match
+      : `${prefix}'[prompt omitted]'`;
+
   return commandLine
-    .replace(/(--prompt\s+)'(?:'\\''|[^'])*'/, "$1'[prompt omitted]'")
+    .replace(/(--prompt\s+)'((?:'\\''|[^'])*)'/, sanitizePrompt)
     .replace(
-      /(\bopencode\s+run\b[\s\S]*\s--\s)'(?:'\\''|[^'])*'$/,
-      "$1'[prompt omitted]'",
+      /(\bopencode\s+run\b[\s\S]*\s--\s)'((?:'\\''|[^'])*)'$/,
+      sanitizePrompt,
     );
 }
 
@@ -325,24 +470,11 @@ function formatTerminalMarkdown(
     task.label,
     formatStatusLine(status),
     formatMetadataLine(task),
+    formatCommandLine(task),
+    getLatestOutputText(output),
   ];
-  const blocks = [formatDiffBlock(lines.join("\n"))];
 
-  if (status === "running") {
-    blocks.push(
-      formatDiffBlock(
-        [formatCommandLine(task), getLatestOutputText(output)].join("\n"),
-      ),
-    );
-  }
-
-  blocks.push(
-    formatDiffBlock(
-      [formatCommandLine(task), getOutputText(output)].join("\n"),
-    ),
-  );
-
-  return blocks.join("\n\n");
+  return formatDiffBlock(lines.join("\n"));
 }
 
 function formatTaskDetailTitle(
@@ -384,9 +516,12 @@ export function TaskDetail({
   const [prOpen, setPrOpen] = useState(false);
   const [reviewShortcutState, setReviewShortcutState] =
     useState<ReviewShortcutState>("querying");
-  const [createPrReviewReport, setCreatePrReviewReport] = useState<
-    string | null
-  >(null);
+  const [createPrReviewReports, setCreatePrReviewReports] = useState<
+    ReviewReportEntry[]
+  >([]);
+  const [reviewReportEntries, setReviewReportEntries] = useState<
+    ReviewReportEntry[]
+  >([]);
 
   const isReviewPr = task.command === "review-pr" && !!task.prUrl;
 
@@ -398,10 +533,25 @@ export function TaskDetail({
 
   const refresh = useCallback(async () => {
     const taskWithCurrentStatus = { ...task, status };
-    const nextOutput = readTaskOutput(task);
+    const nextOutput = readTaskOutputPreview(task);
     const nextStatus = getTaskStatus(taskWithCurrentStatus);
 
     setOutput(nextOutput);
+
+    let parsedReviewReports: ReviewReportEntry[] = [];
+    if (
+      isReviewPr &&
+      nextStatus === "completed" &&
+      reviewReportEntries.length === 0
+    ) {
+      parsedReviewReports = task.prUrl
+        ? mergeReviewReportEntries(
+            await findLocalReviewReports(task.prUrl),
+            getReviewReportEntriesFromTask(task),
+          )
+        : getReviewReportEntriesFromTask(task);
+      setReviewReportEntries(parsedReviewReports);
+    }
 
     if (nextStatus !== status) {
       const wasRunning = status === "running";
@@ -414,15 +564,16 @@ export function TaskDetail({
         nextStatus === "completed" &&
         task.prUrl
       ) {
-        const report = extractReviewReport(nextOutput);
-        if (report) {
+        if (parsedReviewReports.length > 0) {
           setHasAutoNavigated(true);
           const prState = await checkPrOpen(task.prUrl, task.dir).then((o) =>
             o ? "open" : "closed",
           );
           push(
             <ReviewReportDetail
-              markdown={report}
+              markdown={parsedReviewReports[0].markdown}
+              reports={parsedReviewReports}
+              initialReportId={getReviewReportEntriesFromTask(task)[0]?.id}
               gitUrl={task.prUrl}
               navigationTitle={task.label}
               prState={prState}
@@ -444,6 +595,7 @@ export function TaskDetail({
     hasAutoNavigated,
     push,
     isReviewPr,
+    reviewReportEntries.length,
     checkReviewPrState,
     onRerunReview,
   ]);
@@ -462,8 +614,7 @@ export function TaskDetail({
 
   const running = status === "running";
   const finished = status === "completed";
-  const latestOutput = readTaskOutput(task);
-  const displayOutput = latestOutput || output;
+  const displayOutput = output;
   const gitUrl = finished ? extractGitUrl(task, displayOutput) : null;
 
   useEffect(() => {
@@ -472,16 +623,16 @@ export function TaskDetail({
     }
     let canceled = false;
     setReviewShortcutState("querying");
-    setCreatePrReviewReport(null);
+    setCreatePrReviewReports([]);
     setPrOpen(false);
     void Promise.all([
-      findLocalReviewReport(gitUrl, task.dir),
+      findLocalReviewReports(gitUrl),
       getReviewShortcutState(gitUrl, task.dir),
-    ]).then(([localReport, nextState]) => {
+    ]).then(([localReports, nextState]) => {
       if (canceled) return;
-      setCreatePrReviewReport(localReport);
+      setCreatePrReviewReports(localReports);
       setPrOpen(nextState === "ready for review");
-      setReviewShortcutState(localReport ? "reviewed" : nextState);
+      setReviewShortcutState(localReports.length > 0 ? "reviewed" : nextState);
     });
     return () => {
       canceled = true;
@@ -549,7 +700,7 @@ export function TaskDetail({
     await showToast({ style: Toast.Style.Animated, title: "Stopping task..." });
     await stopTask({ ...task, status });
     setStatus("stopped");
-    setOutput(readTaskOutput(task));
+    setOutput(readTaskOutputPreview(task));
     await showToast({ style: Toast.Style.Success, title: "Task canceled" });
   }
 
@@ -563,6 +714,15 @@ export function TaskDetail({
       clearRootSearch: true,
       popToRootType: PopToRootType.Immediate,
     });
+  }
+
+  async function handleCopyFullOutput() {
+    await Clipboard.copy(readTaskOutput(task));
+    await showToast({ style: Toast.Style.Success, title: "Output copied" });
+  }
+
+  async function handleOpenLogFile() {
+    await open(task.outputFile);
   }
 
   async function handleStartReview() {
@@ -607,12 +767,13 @@ export function TaskDetail({
 
   const reviewReport =
     finished && task.command === "review-pr" && task.prUrl
-      ? extractReviewReport(displayOutput) || fallbackReviewReport(task)
+      ? reviewReportEntries[0]?.markdown
       : null;
   const showReviewShortcutHint =
     finished && task.command === "create-pr" && !!gitUrl;
   const hasReviewReportAction =
-    (reviewReport && task.prUrl) || (createPrReviewReport && gitUrl);
+    (reviewReport && task.prUrl) ||
+    (createPrReviewReports.length > 0 && gitUrl);
   const markdown = formatTerminalMarkdown(task, status, displayOutput);
   const navigationTitle = formatTaskDetailTitle(
     task,
@@ -635,6 +796,10 @@ export function TaskDetail({
                 push(
                   <ReviewReportDetail
                     markdown={reviewReport}
+                    reports={reviewReportEntries}
+                    initialReportId={
+                      getReviewReportEntriesFromTask(task)[0]?.id
+                    }
                     gitUrl={task.prUrl!}
                     navigationTitle={task.label}
                     prState={prOpen ? "open" : "closed"}
@@ -645,14 +810,15 @@ export function TaskDetail({
               }
             />
           )}
-          {createPrReviewReport && gitUrl && (
+          {createPrReviewReports.length > 0 && gitUrl && (
             <Action
               title="View Review Report"
               icon={Icon.Document}
               onAction={() =>
                 push(
                   <ReviewReportDetail
-                    markdown={createPrReviewReport}
+                    markdown={createPrReviewReports[0].markdown}
+                    reports={createPrReviewReports}
                     gitUrl={gitUrl}
                     navigationTitle={task.label}
                     prState={prOpen ? "open" : "closed"}
@@ -736,10 +902,17 @@ export function TaskDetail({
                 onAction={() => void handleStartReview()}
               />
             )}
-          <Action.CopyToClipboard
+          <Action
             title="Copy Output"
-            content={displayOutput}
+            icon={Icon.Clipboard}
             shortcut={{ modifiers: ["cmd", "shift"], key: "enter" }}
+            onAction={() => void handleCopyFullOutput()}
+          />
+          <Action
+            title="Open Log File"
+            icon={Icon.Document}
+            shortcut={{ modifiers: ["cmd", "shift"], key: "o" }}
+            onAction={() => void handleOpenLogFile()}
           />
           <Action
             title="Refresh"
@@ -778,6 +951,8 @@ export function TaskDetail({
 
 export function ReviewReportDetail({
   markdown,
+  reports,
+  initialReportId,
   gitUrl,
   navigationTitle,
   prState,
@@ -785,6 +960,8 @@ export function ReviewReportDetail({
   onReview,
 }: {
   markdown: string;
+  reports?: ReviewReportEntry[];
+  initialReportId?: string;
   gitUrl: string;
   navigationTitle: string;
   prState?: string;
@@ -792,6 +969,39 @@ export function ReviewReportDetail({
   onReview?: () => void;
 }) {
   const { pop } = useNavigation();
+  const initialReportEntries =
+    reports && reports.length > 0
+      ? reports
+      : [{ id: "report", markdown, createdAt: 0 }];
+  const [reportEntries, setReportEntries] = useState(initialReportEntries);
+  const [selectedReportId, setSelectedReportId] = useState(
+    initialReportId &&
+      reportEntries.some((report) => report.id === initialReportId)
+      ? initialReportId
+      : reportEntries[0].id,
+  );
+  const selectedReport =
+    reportEntries.find((report) => report.id === selectedReportId) ??
+    reportEntries[0];
+
+  useEffect(() => {
+    if (!reportEntries.some((report) => report.id === selectedReportId)) {
+      setSelectedReportId(reportEntries[0].id);
+    }
+  }, [reportEntries, selectedReportId]);
+
+  useEffect(() => {
+    let canceled = false;
+    void findLocalReviewReports(gitUrl).then((samePrReports) => {
+      if (canceled || samePrReports.length === 0) return;
+      setReportEntries((current) =>
+        mergeReviewReportEntries(samePrReports, current),
+      );
+    });
+    return () => {
+      canceled = true;
+    };
+  }, [gitUrl]);
 
   async function handleCloseMainWindow() {
     await closeMainWindow({
@@ -855,75 +1065,100 @@ export function ReviewReportDetail({
     }
   }
 
-  return (
-    <Detail
-      markdown={markdown}
-      navigationTitle={navigationTitle}
-      actions={
-        <ActionPanel>
-          <Action
-            title="Close Raycast"
-            icon={Icon.Window}
-            onAction={() => void handleCloseMainWindow()}
-          />
-          <Action.CopyToClipboard title="Copy Pr Link" content={gitUrl} />
-          <Action
-            title="Open in Browser"
-            icon={Icon.Globe}
-            shortcut={{ modifiers: ["cmd"], key: "o" }}
-            onAction={() => {
-              void open(gitUrl);
-              void handleCloseMainWindow();
-            }}
-          />
-          {canReview && (
+  const reportActions = (
+    <ActionPanel>
+      <Action
+        title="Close Raycast"
+        icon={Icon.Window}
+        onAction={() => void handleCloseMainWindow()}
+      />
+      <Action.CopyToClipboard title="Copy Pr Link" content={gitUrl} />
+      <Action
+        title="Open in Browser"
+        icon={Icon.Globe}
+        shortcut={{ modifiers: ["cmd"], key: "o" }}
+        onAction={() => {
+          void open(gitUrl);
+          void handleCloseMainWindow();
+        }}
+      />
+      {canReview && (
+        <Action
+          title="Re-run Review"
+          icon={Icon.ArrowClockwise}
+          shortcut={{ modifiers: ["cmd"], key: "r" }}
+          onAction={onReview}
+        />
+      )}
+      {isOpen && prNumber && (
+        <>
+          <ActionPanel.Submenu
+            title="Approve & Merge"
+            icon={Icon.Check}
+            shortcut={{ modifiers: ["cmd"], key: "y" }}
+          >
             <Action
-              title="Re-run Review"
-              icon={Icon.ArrowClockwise}
-              shortcut={{ modifiers: ["cmd"], key: "r" }}
-              onAction={onReview}
+              title="Merge"
+              icon={Icon.Check}
+              onAction={() => void handleMergePR("--merge")}
             />
-          )}
-          {isOpen && prNumber && (
-            <>
-              <ActionPanel.Submenu
-                title="Approve & Merge"
-                icon={Icon.Check}
-                shortcut={{ modifiers: ["cmd"], key: "y" }}
-              >
-                <Action
-                  title="Merge"
-                  icon={Icon.Check}
-                  onAction={() => void handleMergePR("--merge")}
-                />
-                <Action
-                  title="Rebase and Merge"
-                  icon={Icon.ArrowRight}
-                  onAction={() => void handleMergePR("--rebase")}
-                />
-                <Action
-                  title="Squash and Merge"
-                  icon={Icon.Layers}
-                  onAction={() => void handleMergePR("--squash")}
-                />
-              </ActionPanel.Submenu>
-              <Action
-                title="Close Pr"
-                icon={Icon.XMarkCircle}
-                style={Action.Style.Destructive}
-                shortcut={{ modifiers: ["cmd"], key: "n" }}
-                onAction={() => void handleClosePR()}
-              />
-            </>
-          )}
+            <Action
+              title="Rebase and Merge"
+              icon={Icon.ArrowRight}
+              onAction={() => void handleMergePR("--rebase")}
+            />
+            <Action
+              title="Squash and Merge"
+              icon={Icon.Layers}
+              onAction={() => void handleMergePR("--squash")}
+            />
+          </ActionPanel.Submenu>
           <Action
-            title="Back"
-            icon={Icon.ArrowLeft}
-            shortcut={{ modifiers: ["cmd"], key: "[" }}
-            onAction={pop}
+            title="Close Pr"
+            icon={Icon.XMarkCircle}
+            style={Action.Style.Destructive}
+            shortcut={{ modifiers: ["cmd"], key: "n" }}
+            onAction={() => void handleClosePR()}
           />
-        </ActionPanel>
-      }
-    />
+        </>
+      )}
+      <Action
+        title="Back"
+        icon={Icon.ArrowLeft}
+        shortcut={{ modifiers: ["cmd"], key: "[" }}
+        onAction={pop}
+      />
+    </ActionPanel>
   );
+
+  return (
+    <List
+      isShowingDetail
+      navigationTitle={navigationTitle}
+      selectedItemId={selectedReport.id}
+      onSelectionChange={(id) => {
+        if (id) setSelectedReportId(id);
+      }}
+    >
+      {reportEntries.map((report, index) => (
+        <List.Item
+          key={report.id}
+          id={report.id}
+          icon={Icon.Document}
+          title={formatReviewReportSelectTitle(report, index)}
+          detail={<List.Item.Detail markdown={report.markdown} />}
+          actions={reportActions}
+        />
+      ))}
+    </List>
+  );
+}
+
+function formatReviewReportSelectTitle(
+  report: ReviewReportEntry,
+  index: number,
+) {
+  const dateText =
+    report.createdAt > 0 ? new Date(report.createdAt).toLocaleString() : "";
+  return dateText ? `Report ${index + 1} - ${dateText}` : `Report ${index + 1}`;
 }

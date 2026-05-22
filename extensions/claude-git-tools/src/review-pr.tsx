@@ -16,8 +16,9 @@ import {
 import { useState, useEffect, useCallback } from "react";
 import { launchTask, readTaskOutput } from "./task-manager";
 import {
-  extractReviewReport,
+  extractReviewReports,
   fallbackReviewReport,
+  type ReviewReportEntry,
   ReviewReportDetail,
   TaskDetail,
 } from "./task-detail";
@@ -49,8 +50,26 @@ interface PullRequest {
 interface PRReviewState {
   hasReport: boolean;
   reportMarkdown?: string;
+  reportEntries?: ReviewReportEntry[];
   isRunning: boolean;
   task?: Task;
+}
+
+function getReportEntriesFromTask(task: Task): ReviewReportEntry[] {
+  const output = readTaskOutput(task);
+  const reports = extractReviewReports(output, task.startTime);
+  if (reports.length > 0) return reports;
+
+  const fallback = fallbackReviewReport(task);
+  return fallback
+    ? [
+        {
+          id: `${task.id}:fallback`,
+          markdown: fallback,
+          createdAt: task.startTime,
+        },
+      ]
+    : [];
 }
 
 async function fetchPRs(dir: string): Promise<PullRequest[]> {
@@ -153,16 +172,14 @@ function PRPicker({
 
       for (const pr of fetched) {
         const matchingTasks = tasks.filter(
-          (t) =>
-            t.command === "review-pr" &&
-            t.prUrl === pr.url &&
-            t.dir === dirPath,
+          (t) => t.command === "review-pr" && t.prUrl === pr.url,
         );
 
         const runningTask = matchingTasks.find((t) => t.status === "running");
-        const completedTask = matchingTasks
+        const completedTasks = matchingTasks
           .filter((t) => t.status === "completed")
-          .sort((a, b) => b.startTime - a.startTime)[0];
+          .sort((a, b) => b.startTime - a.startTime);
+        const completedTask = completedTasks[0];
 
         if (runningTask) {
           states.set(pr.url, {
@@ -171,13 +188,14 @@ function PRPicker({
             task: runningTask,
           });
         } else if (completedTask) {
-          const output = readTaskOutput(completedTask);
-          const report =
-            extractReviewReport(output) || fallbackReviewReport(completedTask);
-          if (report) {
+          const reportEntries = completedTasks
+            .flatMap(getReportEntriesFromTask)
+            .sort((a, b) => b.createdAt - a.createdAt);
+          if (reportEntries.length > 0) {
             states.set(pr.url, {
               hasReport: true,
-              reportMarkdown: report,
+              reportMarkdown: reportEntries[0].markdown,
+              reportEntries,
               isRunning: false,
               task: completedTask,
             });
@@ -233,6 +251,7 @@ function PRPicker({
         `review-pr #${pr.number}`,
         {
           prUrl: pr.url,
+          skillPath: skill.skillPath,
           skillName: skill.skillName,
           skillDir: skill.skillDir,
           agent: skill.agent,
@@ -322,6 +341,7 @@ function PRPicker({
       push(
         <ReviewReportDetail
           markdown={reviewState.reportMarkdown}
+          reports={reviewState.reportEntries}
           gitUrl={pr.url}
           navigationTitle={`PR #${pr.number} Review`}
           prState={pr.state}
