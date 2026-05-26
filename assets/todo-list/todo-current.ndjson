@@ -1,8 +1,5 @@
 {"title":"wisop - 配置页参数配置","completed":false,"timeAdded":1778319308905,"id":"todo-1778319308905-todo-0-wisop","section":"todo","updatedAt":1778319308911,"tag":""}
 {"title":"模型评估 - 作为一个研究员，我希望查看模型在不同配置下的回测报告，以判断其有效性。","completed":false,"timeAdded":1779087902594,"id":"todo-1779087902594-todo-2-item","section":"todo","updatedAt":1779087902600,"dueDate":1779379200001}
-{"title":"模型pipeline - 列表页","completed":false,"timeAdded":1779265124428,"id":"todo-1779265124428-todo-2-pipeline","section":"todo","updatedAt":1779265124449}
-{"title":"模型pipeline - yaml编辑页","completed":false,"timeAdded":1779265157174,"id":"todo-1779265157174-todo-3-pipeline-yaml","section":"todo","updatedAt":1779265157179}
-{"title":"wisop - 机构配额管理页","completed":false,"timeAdded":1779422515301,"id":"todo-1779422515301-todo-4-wisop","section":"todo","updatedAt":1779422515320}
 {"title":"fQuantify - 因子评估、复现，模型复现增加文件目录预览功能","completed":true,"timeAdded":1778341787191,"id":"todo-1778341787191-todo-1-fquantify","section":"completed","updatedAt":1778341787199,"dueDate":1778688000001,"completedAt":1778341789499}
 {"title":"因子执行接口对接","completed":true,"timeAdded":1778463043464,"id":"todo-1778463043464-todo-2-item","section":"completed","updatedAt":1778463043469,"priority":2,"completedAt":1778825972259}
 {"title":"wisop - credits充值支持单邮箱多用户场景","completed":true,"timeAdded":1778495375043,"id":"todo-1778495375043-todo-3-wisop-credits","section":"completed","updatedAt":1778495375052,"completedAt":1778495376975}
@@ -16,3 +13,6 @@
 {"title":"因子再评估 - 作为研究员，我希望对评估效果不好或失败的因子，调整参数并重新执行评估。【备注：评估列表，按因子进行group】","completed":true,"timeAdded":1779087951854,"id":"todo-1779087951854-todo-3-group","section":"completed","updatedAt":1779087951866,"dueDate":1779379200001,"completedAt":1779262418669}
 {"title":"因子详情页相关链接 - 作为研究员，我希望在因子详情页，看到的相关的复现实验，评估实验以及执行记录","completed":true,"timeAdded":1779087982435,"id":"todo-1779087982435-todo-4-item","section":"completed","updatedAt":1779087982443,"dueDate":1779379200001,"completedAt":1779186773172}
 {"title":"因子执行列表合并 - 同一个因子，在列表中只展示一条。点开详情后，再展示每天执行的结果。","completed":true,"timeAdded":1779174522007,"id":"todo-1779174522007-todo-5-item","section":"completed","updatedAt":1779174522019,"dueDate":1779379200001,"completedAt":1779186776096}
+{"title":"模型pipeline - 列表页","completed":true,"timeAdded":1779265124428,"id":"todo-1779265124428-todo-2-pipeline","section":"completed","updatedAt":1779265124449,"completedAt":1779428623918}
+{"title":"模型pipeline - yaml编辑页","completed":true,"timeAdded":1779265157174,"id":"todo-1779265157174-todo-3-pipeline-yaml","section":"completed","updatedAt":1779265157179,"completedAt":1779428638172}
+{"title":"wisop - 机构配额管理页","completed":true,"timeAdded":1779422515301,"id":"todo-1779422515301-todo-4-wisop","section":"completed","updatedAt":1779422515320,"completedAt":1779428619557}

@@ -1,0 +1,58 @@
+{
+  "$schema": "https://www.raycast.com/schemas/extension.json",
+  "name": "offwork-remider",
+  "title": "Offwork Reminder",
+  "description": "Show a workday countdown to offwork time and send a reminder when it is time to leave.",
+  "icon": "icon.png",
+  "author": "wang0122xl",
+  "categories": [
+    "Productivity"
+  ],
+  "license": "MIT",
+  "commands": [
+    {
+      "name": "offwork-remider",
+      "title": "Offwork Reminder",
+      "description": "Show today's countdown to offwork time",
+      "mode": "view"
+    },
+    {
+      "name": "check-offwork",
+      "title": "距下班还剩",
+      "subtitle": "Updates in Root Search",
+      "description": "Show the latest countdown in Root Search and send the offwork reminder",
+      "mode": "no-view",
+      "interval": "1m"
+    }
+  ],
+  "preferences": [
+    {
+      "type": "textfield",
+      "name": "offworkTime",
+      "title": "Offwork Time",
+      "label": "Offwork Time",
+      "description": "24-hour time in HH:mm format, for example 18:30.",
+      "placeholder": "18:00",
+      "default": "18:00",
+      "required": true
+    }
+  ],
+  "dependencies": {
+    "@raycast/api": "^1.104.0"
+  },
+  "devDependencies": {
+    "@raycast/eslint-config": "^1.0.11",
+    "@types/node": "22.13.14",
+    "@types/react": "19.0.12",
+    "eslint": "^8.57.0",
+    "prettier": "^3.5.3",
+    "typescript": "^5.8.2"
+  },
+  "scripts": {
+    "build": "ray build",
+    "dev": "ray develop",
+    "fix-lint": "ray lint --fix",
+    "lint": "ray lint",
+    "prepublishOnly": "echo \"Error: no publish\" && exit 1"
+  }
+}
