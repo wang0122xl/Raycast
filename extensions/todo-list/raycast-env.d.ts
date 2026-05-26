@@ -8,6 +8,8 @@
 /* eslint-disable @typescript-eslint/ban-types */
 
 type ExtensionPreferences = {
+  /** Todo Encryption Key - Used to encrypt todo data on disk. Keep this key safe; changing it requires the original key to read existing todos. */
+  "encryptionKey": string,
   /** Completed tasks in Menu Bar - Show only 3 latest completed tasks, or show/hide all. */
   "completed": "latest" | "show_all" | "hide_all",
   /** Task sorting - The order in which task are sorted. */

@@ -1,4 +1,4 @@
-import { List } from "@raycast/api";
+import { Action, ActionPanel, Icon, List, openExtensionPreferences, useNavigation } from "@raycast/api";
 import {
   ALL_TAG_VALUE,
   editingAtom,
@@ -7,6 +7,7 @@ import {
   searchBarTextAtom,
   searchModeAtom,
   TodoItem,
+  todoStorageAvailabilityAtom,
 } from "./atoms";
 import { useAtom } from "jotai";
 import TodoSection from "./todo_section";
@@ -14,6 +15,7 @@ import ListActions from "./list_actions";
 import ListTags from "./list_tags";
 import { useMemo } from "react";
 import { sortSearchTodoItem, todoMatchesSearch } from "./utils";
+import TodoEncryptionKeyForm from "./todo_encryption_key_form";
 
 function flattenTodos(sections: { pinned: TodoItem[]; todo: TodoItem[]; completed: TodoItem[] }) {
   return [...sections.pinned, ...sections.todo, ...sections.completed];
@@ -24,6 +26,30 @@ export default function TodoList() {
   const [searchBarText, setSearchBarText] = useAtom(searchBarTextAtom);
   const [editing] = useAtom(editingAtom);
   const [selectedTag] = useAtom(selectedTagAtom);
+  const [storageAvailability] = useAtom(todoStorageAvailabilityAtom);
+  const { push } = useNavigation();
+
+  if (!storageAvailability.isAvailable) {
+    return (
+      <List navigationTitle="Manage Todo List" searchBarPlaceholder="Set Todo Encryption Key">
+        <List.EmptyView
+          actions={
+            <ActionPanel>
+              <Action
+                icon={Icon.Key}
+                onAction={() => push(<TodoEncryptionKeyForm />)}
+                title="Set Todo Encryption Key"
+              />
+              <Action icon={Icon.Gear} onAction={() => openExtensionPreferences()} title="Open Extension Preferences" />
+            </ActionPanel>
+          }
+          description={storageAvailability.message}
+          icon={Icon.Key}
+          title="Todo Encryption Key Required"
+        />
+      </List>
+    );
+  }
 
   return (
     <List

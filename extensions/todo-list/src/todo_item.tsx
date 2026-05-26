@@ -1,4 +1,4 @@
-import { Action, ActionPanel, Color, Icon, List, useNavigation } from "@raycast/api";
+import { Action, ActionPanel, Alert, Color, Icon, List, confirmAlert, useNavigation } from "@raycast/api";
 import dayjs from "dayjs";
 import relativeTime from "dayjs/plugin/relativeTime";
 import isToday from "dayjs/plugin/isToday";
@@ -35,6 +35,19 @@ const dueDateAccessory = (dueDate: number): List.Item.Accessory => {
 
   const inputDate = dayjs(dueDate);
   return { text: { value: formatCompactDate(inputDate.valueOf()), color: color } };
+};
+
+const confirmDeleteTodo = async (deleteTodo: () => void) => {
+  await confirmAlert({
+    title: "Delete Todo",
+    icon: { source: Icon.Trash, tintColor: Color.Red },
+    message: "Are you sure you want to delete this todo?",
+    primaryAction: {
+      style: Alert.ActionStyle.Destructive,
+      title: "Delete",
+      onAction: deleteTodo,
+    },
+  });
 };
 
 const SingleTodoItem = ({ item, idx, sectionKey }: { item: TodoItem; idx: number; sectionKey: keyof TodoSections }) => {
@@ -76,18 +89,20 @@ const SingleTodoItem = ({ item, idx, sectionKey }: { item: TodoItem; idx: number
       list.push(dueDateAccessory(item.dueDate));
     }
     if (item.deletedAt !== undefined) {
-      list.push({ text: { value: `deleted on ${formatCompactDate(item.deletedAt)}`, color: Color.SecondaryText } });
+      list.push({ text: { value: `Deleted ${formatCompactDate(item.deletedAt)}`, color: Color.SecondaryText } });
     }
     if (SECTIONS_DATA[sectionKey].accessoryIcon) {
       const { accessoryIcon, name } = SECTIONS_DATA[sectionKey];
       list.push({ tooltip: name, icon: accessoryIcon });
     }
     if (item.completed) {
+      const completedAt = formatCompactDate(item.completedAt ?? item.timeAdded);
       list.push({
         text: {
-          value: `completed on ${formatCompactDate(item.completedAt ?? item.timeAdded)}`,
+          value: `Done ${completedAt}`,
           color: Color.SecondaryText,
         },
+        tooltip: `Completed on ${completedAt}`,
       });
     }
     return list;
@@ -194,7 +209,7 @@ const SingleTodoItem = ({ item, idx, sectionKey }: { item: TodoItem; idx: number
             />
             <Action
               icon={{ source: Icon.Trash, tintColor: Color.Red }}
-              onAction={() => deleteTodo()}
+              onAction={() => confirmDeleteTodo(deleteTodo)}
               shortcut={{ modifiers: ["cmd"], key: "d" }}
               style={Action.Style.Destructive}
               title="Delete Todo"

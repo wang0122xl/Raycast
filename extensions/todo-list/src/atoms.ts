@@ -1,5 +1,11 @@
 import { atom } from "jotai";
-import { loadCurrentTodoSections, loadSearchableTodoSections, saveTodoSections } from "./storage";
+import {
+  getTodoStorageAvailability,
+  loadCurrentTodoSections,
+  loadSearchableTodoSections,
+  saveTodoEncryptionSecret,
+  saveTodoSections,
+} from "./storage";
 
 export interface TodoSections {
   pinned: TodoItem[];
@@ -36,6 +42,20 @@ export const todoAtom = atom(
 export const searchableTodoAtom = atom((get) => {
   get(searchVersion);
   return loadSearchableTodoSections();
+});
+
+export const todoStorageAvailabilityAtom = atom((get) => {
+  get(searchVersion);
+  return getTodoStorageAvailability();
+});
+
+export const todoEncryptionKeyAtom = atom(null, (get, set, encryptionKey: string) => {
+  saveTodoEncryptionSecret(encryptionKey);
+  const updatedCurrent = loadCurrentTodoSections();
+  // @ts-expect-error Jotai is confused
+  set(todo, updatedCurrent);
+  // @ts-expect-error Jotai is confused
+  set(searchVersion, get(searchVersion) + 1);
 });
 
 export const searchModeAtom = atom(false);

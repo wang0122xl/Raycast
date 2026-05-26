@@ -66,6 +66,13 @@
   ],
   "preferences": [
     {
+      "name": "encryptionKey",
+      "type": "password",
+      "required": true,
+      "title": "Todo Encryption Key",
+      "description": "Used to encrypt todo data on disk. Keep this key safe; changing it requires the original key to read existing todos."
+    },
+    {
       "name": "completed",
       "type": "dropdown",
       "required": false,

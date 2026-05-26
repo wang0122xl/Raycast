@@ -1,4 +1,5 @@
 import { environment } from "@raycast/api";
+import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import {
@@ -10,6 +11,7 @@ import {
   TODO_FILE,
   TODO_MANIFEST_FILE,
   TODO_STORAGE_PATH,
+  preferences,
 } from "./config";
 import type { TodoItem, TodoSections } from "./atoms";
 
@@ -41,16 +43,202 @@ type TodoManifest = {
   migratedFromLegacyJson?: boolean;
 };
 
+type EncryptedStorageRecord = {
+  encrypted: true;
+  version: 1;
+  iv: string;
+  tag: string;
+  data: string;
+};
+
+type StoredEncryptedTodoItem = Omit<StoredTodoItem, "title" | "tag"> & {
+  encryptedContent: EncryptedStorageRecord;
+};
+
+type StoredEncryptedTodoEvent =
+  | {
+      type: "upsert";
+      item: StoredEncryptedTodoItem;
+      timestamp: number;
+    }
+  | {
+      type: "hard-delete";
+      id: string;
+      timestamp: number;
+    };
+
 export type TodoStorageState = {
   current: TodoSections;
   searchable: TodoSections;
 };
+
+const ENCRYPTION_SALT = "raycast-todo-list-storage-v1";
+const ENCRYPTION_ALGORITHM = "aes-256-gcm";
+const TODO_ENCRYPTION_KEY_FILE = path.join(environment.supportPath, "todo-encryption-key");
+
+let cachedSecret: string | undefined;
+let cachedEncryptionKey: Buffer | undefined;
+let todoStorageError: string | undefined;
 
 const cloneDefaultSections = (): TodoSections => ({
   pinned: [],
   todo: [],
   completed: [],
 });
+
+export function getTodoStorageAvailability() {
+  return {
+    isAvailable: todoStorageError === undefined,
+    message: todoStorageError,
+  };
+}
+
+function markTodoStorageAvailable() {
+  todoStorageError = undefined;
+}
+
+function handleTodoStorageError(error: unknown) {
+  todoStorageError = error instanceof Error ? error.message : "Unable to read encrypted todo storage.";
+}
+
+function getTodoEncryptionSecret() {
+  const encryptionKey =
+    readStoredTodoEncryptionSecret() ?? (preferences as Preferences & { encryptionKey?: string }).encryptionKey?.trim();
+  if (!encryptionKey) {
+    throw new Error(
+      "Todo encryption key is required. Set it from the Todo List prompt or Raycast extension preferences.",
+    );
+  }
+  return encryptionKey;
+}
+
+function readStoredTodoEncryptionSecret() {
+  try {
+    const encryptionKey = fs.readFileSync(TODO_ENCRYPTION_KEY_FILE, "utf8").trim();
+    return encryptionKey.length > 0 ? encryptionKey : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function saveTodoEncryptionSecret(encryptionKey: string) {
+  const trimmedEncryptionKey = encryptionKey.trim();
+  if (!trimmedEncryptionKey) {
+    throw new Error("Todo encryption key cannot be empty.");
+  }
+
+  fs.mkdirSync(environment.supportPath, { recursive: true });
+  const tempPath = `${TODO_ENCRYPTION_KEY_FILE}.${process.pid}.tmp`;
+  fs.writeFileSync(tempPath, `${trimmedEncryptionKey}\n`, { mode: 0o600 });
+  fs.renameSync(tempPath, TODO_ENCRYPTION_KEY_FILE);
+  cachedSecret = undefined;
+  cachedEncryptionKey = undefined;
+}
+
+function getTodoEncryptionKey() {
+  const secret = getTodoEncryptionSecret();
+  if (!cachedEncryptionKey || cachedSecret !== secret) {
+    cachedSecret = secret;
+    cachedEncryptionKey = crypto.scryptSync(secret, ENCRYPTION_SALT, 32);
+  }
+  return cachedEncryptionKey;
+}
+
+function isEncryptedStorageRecord(record: unknown): record is EncryptedStorageRecord {
+  return (
+    typeof record === "object" &&
+    record !== null &&
+    (record as EncryptedStorageRecord).encrypted === true &&
+    (record as EncryptedStorageRecord).version === 1 &&
+    typeof (record as EncryptedStorageRecord).iv === "string" &&
+    typeof (record as EncryptedStorageRecord).tag === "string" &&
+    typeof (record as EncryptedStorageRecord).data === "string"
+  );
+}
+
+function encryptStorageRecord<T>(record: T): EncryptedStorageRecord {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv(ENCRYPTION_ALGORITHM, getTodoEncryptionKey(), iv);
+  const encrypted = Buffer.concat([cipher.update(JSON.stringify(record), "utf8"), cipher.final()]);
+
+  return {
+    encrypted: true,
+    version: 1,
+    iv: iv.toString("base64"),
+    tag: cipher.getAuthTag().toString("base64"),
+    data: encrypted.toString("base64"),
+  };
+}
+
+function decryptStorageRecord<T>(record: EncryptedStorageRecord): T {
+  const decipher = crypto.createDecipheriv(
+    ENCRYPTION_ALGORITHM,
+    getTodoEncryptionKey(),
+    Buffer.from(record.iv, "base64"),
+  );
+  decipher.setAuthTag(Buffer.from(record.tag, "base64"));
+  const decrypted = Buffer.concat([decipher.update(Buffer.from(record.data, "base64")), decipher.final()]);
+  return JSON.parse(decrypted.toString("utf8")) as T;
+}
+
+function decodeStorageRecord<T>(record: unknown): T {
+  if (isEncryptedStorageRecord(record)) {
+    return decryptStorageRecord<T>(record);
+  }
+  return record as T;
+}
+
+function encodeTodoItem(item: StoredTodoItem): StoredEncryptedTodoItem {
+  const { title, tag, ...metadata } = item;
+  return {
+    ...metadata,
+    encryptedContent: encryptStorageRecord({ title, tag }),
+  };
+}
+
+function decodeTodoItem(item: StoredTodoItem | StoredEncryptedTodoItem): StoredTodoItem {
+  if ("encryptedContent" in item) {
+    const { encryptedContent, ...metadata } = item;
+    const content = decryptStorageRecord<Pick<TodoItem, "title" | "tag">>(encryptedContent);
+    return {
+      ...metadata,
+      ...content,
+    };
+  }
+  return item;
+}
+
+function encodeTodoEvent(event: TodoEvent): StoredEncryptedTodoEvent {
+  if (event.type === "hard-delete") return event;
+
+  return {
+    ...event,
+    item: encodeTodoItem(event.item),
+  };
+}
+
+function decodeTodoEvent(event: TodoEvent | StoredEncryptedTodoEvent): TodoEvent {
+  if (event.type === "hard-delete") return event;
+
+  return {
+    ...event,
+    item: decodeTodoItem(event.item),
+  };
+}
+
+function isEncodedTodoItem(record: unknown): record is StoredEncryptedTodoItem {
+  return (
+    typeof record === "object" &&
+    record !== null &&
+    isEncryptedStorageRecord((record as StoredEncryptedTodoItem).encryptedContent)
+  );
+}
+
+function isEncodedTodoEvent(record: unknown): record is StoredEncryptedTodoEvent {
+  if (typeof record !== "object" || record === null) return false;
+  const event = record as StoredEncryptedTodoEvent;
+  return event.type === "hard-delete" || (event.type === "upsert" && isEncodedTodoItem(event.item));
+}
 
 function ensureSupportPath() {
   fs.mkdirSync(TODO_STORAGE_PATH, { recursive: true });
@@ -115,11 +303,7 @@ function migrateStoragePathIfNeeded() {
 }
 
 function createId(item: Pick<TodoItem, "timeAdded" | "title">, section: TodoSectionKey, index: number) {
-  const normalizedTitle = item.title
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/(^-|-$)/g, "");
-  return `todo-${item.timeAdded}-${section}-${index}-${normalizedTitle || "item"}`;
+  return `todo-${item.timeAdded}-${section}-${index}`;
 }
 
 function readManifest(): TodoManifest | undefined {
@@ -150,21 +334,33 @@ function getManifest(): TodoManifest {
 }
 
 function parseNdjson<T>(filePath: string): T[] {
+  if (!fs.existsSync(filePath)) return [];
+
   try {
     return fs
       .readFileSync(filePath, "utf8")
       .split("\n")
       .map((line) => line.trim())
       .filter(Boolean)
-      .map((line) => JSON.parse(line) as T);
+      .map((line) => decodeStorageRecord<T>(JSON.parse(line) as unknown));
   } catch {
-    return [];
+    throw new Error(
+      `Unable to read encrypted todo storage file: ${filePath}. Check the Todo Encryption Key preference.`,
+    );
   }
 }
 
-function writeNdjson<T>(filePath: string, records: T[]) {
-  const contents = records.map((record) => JSON.stringify(record)).join("\n");
+function writeNdjson<T>(filePath: string, records: T[], encodeRecord: (record: T) => unknown) {
+  const contents = records.map((record) => JSON.stringify(encodeRecord(record))).join("\n");
   writeFileAtomic(filePath, contents.length > 0 ? `${contents}\n` : "");
+}
+
+function readJsonStorageFile<T>(filePath: string): T {
+  return decodeStorageRecord<T>(JSON.parse(fs.readFileSync(filePath, "utf8")) as unknown);
+}
+
+function writeJsonStorageFile<T>(filePath: string, record: T) {
+  writeFileAtomic(filePath, `${JSON.stringify(encryptStorageRecord(record))}\n`);
 }
 
 function appendEvent(event: TodoEvent, manifest: TodoManifest) {
@@ -175,7 +371,7 @@ function appendEvent(event: TodoEvent, manifest: TodoManifest) {
     writeManifest(manifest);
     activePath = eventFilePath(manifest.activeEventFile);
   }
-  fs.appendFileSync(activePath, `${JSON.stringify(event)}\n`);
+  fs.appendFileSync(activePath, `${JSON.stringify(encodeTodoEvent(event))}\n`);
 }
 
 function listEventFiles() {
@@ -245,7 +441,8 @@ function currentSectionsFromRecords(records: StoredTodoItem[]) {
 function replayEvents(): TodoSections {
   const recordsById = new Map<string, StoredTodoItem>();
   listEventFiles().forEach((fileName) => {
-    parseNdjson<TodoEvent>(eventFilePath(fileName)).forEach((event) => {
+    parseNdjson<TodoEvent | StoredEncryptedTodoEvent>(eventFilePath(fileName)).forEach((storedEvent) => {
+      const event = decodeTodoEvent(storedEvent);
       if (event.type === "hard-delete") {
         recordsById.delete(event.id);
       } else {
@@ -267,7 +464,8 @@ function backfillEventsFromCurrentIfNeeded(manifest: TodoManifest) {
 
   const now = Date.now();
   const eventsById = byId(flattenSections(replayEvents()));
-  parseNdjson<StoredTodoItem>(TODO_CURRENT_FILE).forEach((item, index) => {
+  parseNdjson<StoredTodoItem | StoredEncryptedTodoItem>(TODO_CURRENT_FILE).forEach((storedItem, index) => {
+    const item = decodeTodoItem(storedItem);
     const normalizedItem = normalizeItem(item, item.section, index, now);
     const eventItem = eventsById.get(normalizedItem.id);
     if (!eventItem || recordsDiffer(eventItem, normalizedItem)) {
@@ -281,7 +479,7 @@ function migrateLegacyJsonIfNeeded(manifest: TodoManifest) {
 
   let legacySections: TodoSections = cloneDefaultSections();
   try {
-    const storedItems = JSON.parse(fs.readFileSync(TODO_FILE, "utf8"));
+    const storedItems = readJsonStorageFile<TodoSections | [TodoItem[], TodoItem[]]>(TODO_FILE);
     if (Array.isArray(storedItems)) {
       const pinned = storedItems[0] ?? [];
       const todo: TodoItem[] = [];
@@ -311,46 +509,124 @@ function migrateLegacyJsonIfNeeded(manifest: TodoManifest) {
 }
 
 function writeCurrent(sections: TodoSections) {
-  writeNdjson(TODO_CURRENT_FILE, flattenSections(sections));
+  writeNdjson(TODO_CURRENT_FILE, flattenSections(sections), encodeTodoItem);
+}
+
+function rewriteCurrentFileIfNeeded() {
+  if (!fs.existsSync(TODO_CURRENT_FILE)) return;
+
+  const records = fs
+    .readFileSync(TODO_CURRENT_FILE, "utf8")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as unknown);
+
+  if (records.every(isEncodedTodoItem)) return;
+
+  writeNdjson(
+    TODO_CURRENT_FILE,
+    records.map((record) => decodeTodoItem(decodeStorageRecord<StoredTodoItem | StoredEncryptedTodoItem>(record))),
+    encodeTodoItem,
+  );
+}
+
+function rewriteEventFileIfNeeded(filePath: string) {
+  if (!fs.existsSync(filePath)) return;
+
+  const records = fs
+    .readFileSync(filePath, "utf8")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as unknown);
+
+  if (records.every(isEncodedTodoEvent)) return;
+
+  writeNdjson(
+    filePath,
+    records.map((record) => decodeTodoEvent(decodeStorageRecord<TodoEvent | StoredEncryptedTodoEvent>(record))),
+    encodeTodoEvent,
+  );
+}
+
+function encryptExistingStorageIfNeeded() {
+  if (fs.existsSync(TODO_FILE)) {
+    const storedItems = JSON.parse(fs.readFileSync(TODO_FILE, "utf8")) as unknown;
+    if (!isEncryptedStorageRecord(storedItems)) {
+      writeJsonStorageFile(TODO_FILE, storedItems);
+    }
+  }
+  rewriteCurrentFileIfNeeded();
+  listEventFiles().forEach((fileName) => {
+    rewriteEventFileIfNeeded(eventFilePath(fileName));
+  });
 }
 
 export function loadTodoState(): TodoStorageState {
-  ensureSupportPath();
-  const manifest = getManifest();
-  backfillEventsFromCurrentIfNeeded(manifest);
-  migrateLegacyJsonIfNeeded(manifest);
+  try {
+    ensureSupportPath();
+    const manifest = getManifest();
+    backfillEventsFromCurrentIfNeeded(manifest);
+    migrateLegacyJsonIfNeeded(manifest);
+    encryptExistingStorageIfNeeded();
 
-  const searchable = replayEvents();
-  const currentFromEvents = currentSectionsFromSearchable(searchable);
-  writeCurrent(currentFromEvents);
+    const searchable = replayEvents();
+    const currentFromEvents = currentSectionsFromSearchable(searchable);
+    writeCurrent(currentFromEvents);
+    markTodoStorageAvailable();
 
-  return {
-    current: currentFromEvents,
-    searchable,
-  };
+    return {
+      current: currentFromEvents,
+      searchable,
+    };
+  } catch (error) {
+    handleTodoStorageError(error);
+    return {
+      current: cloneDefaultSections(),
+      searchable: cloneDefaultSections(),
+    };
+  }
 }
 
 export function loadCurrentTodoSections(): TodoSections {
-  ensureSupportPath();
-  const manifest = getManifest();
-  backfillEventsFromCurrentIfNeeded(manifest);
-  migrateLegacyJsonIfNeeded(manifest);
+  try {
+    ensureSupportPath();
+    const manifest = getManifest();
+    backfillEventsFromCurrentIfNeeded(manifest);
+    migrateLegacyJsonIfNeeded(manifest);
+    encryptExistingStorageIfNeeded();
 
-  if (!fs.existsSync(TODO_CURRENT_FILE)) {
-    return loadTodoState().current;
+    if (!fs.existsSync(TODO_CURRENT_FILE)) {
+      return loadTodoState().current;
+    }
+
+    const current = currentSectionsFromRecords(
+      parseNdjson<StoredTodoItem | StoredEncryptedTodoItem>(TODO_CURRENT_FILE).map(decodeTodoItem),
+    );
+    writeCurrent(current);
+    markTodoStorageAvailable();
+    return current;
+  } catch (error) {
+    handleTodoStorageError(error);
+    return cloneDefaultSections();
   }
-
-  const current = currentSectionsFromRecords(parseNdjson<StoredTodoItem>(TODO_CURRENT_FILE));
-  writeCurrent(current);
-  return current;
 }
 
 export function loadSearchableTodoSections(): TodoSections {
-  ensureSupportPath();
-  const manifest = getManifest();
-  backfillEventsFromCurrentIfNeeded(manifest);
-  migrateLegacyJsonIfNeeded(manifest);
-  return replayEvents();
+  try {
+    ensureSupportPath();
+    const manifest = getManifest();
+    backfillEventsFromCurrentIfNeeded(manifest);
+    migrateLegacyJsonIfNeeded(manifest);
+    encryptExistingStorageIfNeeded();
+    const searchable = replayEvents();
+    markTodoStorageAvailable();
+    return searchable;
+  } catch (error) {
+    handleTodoStorageError(error);
+    return cloneDefaultSections();
+  }
 }
 
 function byId(records: StoredTodoItem[]) {
@@ -363,42 +639,48 @@ function hasRecordChanged(previousItem: StoredTodoItem | undefined, nextItem: St
 }
 
 export function saveTodoSections(previousCurrent: TodoSections, nextCurrent: TodoSections) {
-  ensureSupportPath();
-  const manifest = getManifest();
-  const now = Date.now();
-  const previousCurrentById = byId(flattenSections(previousCurrent));
-  const nextCurrentRecords = flattenSections(nextCurrent, now);
-  const nextCurrentById = byId(nextCurrentRecords);
+  try {
+    ensureSupportPath();
+    const manifest = getManifest();
+    const now = Date.now();
+    const previousCurrentById = byId(flattenSections(previousCurrent));
+    const nextCurrentRecords = flattenSections(nextCurrent, now);
+    const nextCurrentById = byId(nextCurrentRecords);
 
-  previousCurrentById.forEach((previousItem, id) => {
-    if (nextCurrentById.has(id)) return;
+    previousCurrentById.forEach((previousItem, id) => {
+      if (nextCurrentById.has(id)) return;
 
-    if (previousItem.completed) {
-      const softDeletedItem: StoredTodoItem = {
-        ...previousItem,
-        deletedAt: now,
+      if (previousItem.completed) {
+        const softDeletedItem: StoredTodoItem = {
+          ...previousItem,
+          deletedAt: now,
+          updatedAt: now,
+        };
+        appendEvent({ type: "upsert", item: softDeletedItem, timestamp: now }, manifest);
+      } else {
+        appendEvent({ type: "hard-delete", id, timestamp: now }, manifest);
+      }
+    });
+
+    nextCurrentRecords.forEach((item) => {
+      const previousItem = previousCurrentById.get(item.id);
+      const normalizedItem: StoredTodoItem = {
+        ...item,
         updatedAt: now,
+        completedAt: item.completed ? (item.completedAt ?? previousItem?.completedAt ?? now) : undefined,
+        deletedAt: undefined,
       };
-      appendEvent({ type: "upsert", item: softDeletedItem, timestamp: now }, manifest);
-    } else {
-      appendEvent({ type: "hard-delete", id, timestamp: now }, manifest);
-    }
-  });
+      if (hasRecordChanged(previousItem, normalizedItem)) {
+        appendEvent({ type: "upsert", item: normalizedItem, timestamp: now }, manifest);
+      }
+    });
 
-  nextCurrentRecords.forEach((item) => {
-    const previousItem = previousCurrentById.get(item.id);
-    const normalizedItem: StoredTodoItem = {
-      ...item,
-      updatedAt: now,
-      completedAt: item.completed ? (item.completedAt ?? previousItem?.completedAt ?? now) : undefined,
-      deletedAt: undefined,
-    };
-    if (hasRecordChanged(previousItem, normalizedItem)) {
-      appendEvent({ type: "upsert", item: normalizedItem, timestamp: now }, manifest);
-    }
-  });
-
-  const current = currentSectionsFromRecords(nextCurrentRecords);
-  writeCurrent(current);
-  return current;
+    const current = currentSectionsFromRecords(nextCurrentRecords);
+    writeCurrent(current);
+    markTodoStorageAvailable();
+    return current;
+  } catch (error) {
+    handleTodoStorageError(error);
+    return previousCurrent;
+  }
 }

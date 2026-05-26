@@ -1,5 +1,5 @@
-import { TodoItem, TodoSections, todoAtom } from "./atoms";
-import { Keyboard, launchCommand, LaunchType, MenuBarExtra } from "@raycast/api";
+import { TodoItem, TodoSections, todoAtom, todoStorageAvailabilityAtom } from "./atoms";
+import { Keyboard, launchCommand, LaunchType, MenuBarExtra, openExtensionPreferences } from "@raycast/api";
 import MenuBarTodoItem from "./menu_bar_todo_item";
 import { SECTIONS_DATA, preferences } from "./config";
 import { useAtom } from "jotai";
@@ -13,6 +13,7 @@ const CompletedLimit: { [key: string]: number | undefined } = {
 
 export default function MenuBar() {
   const [todoSections] = useAtom(todoAtom);
+  const [storageAvailability] = useAtom(todoStorageAvailabilityAtom);
 
   const todoLength = Object.values(todoSections).reduce((acc, section) => acc + section.length, 0);
   const completedLimit = CompletedLimit[preferences.completed];
@@ -24,6 +25,9 @@ export default function MenuBar() {
       }}
       tooltip="Your Todo List"
     >
+      {!storageAvailability.isAvailable ? (
+        <MenuBarExtra.Item title="Set Encryption Key" onAction={() => openExtensionPreferences()} />
+      ) : null}
       <MenuBarExtra.Item
         title="Add Todo"
         shortcut={Keyboard.Shortcut.Common.New}
