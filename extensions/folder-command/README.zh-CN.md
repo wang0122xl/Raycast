@@ -22,6 +22,9 @@ osascript -e 'tell application "Finder" to POSIX path of (target of front window
 
 - `get-front-finder-folder`：返回 Finder 当前窗口目录。
 - `list-folder-files`：列出 Finder 当前目录中的文件。
+- `copy-folder-items`：经过 Raycast 确认后，在 Finder 当前目录内复制文件或文件夹，不覆盖已有目标。
+- `move-folder-items`：经过 Raycast 确认后，在 Finder 当前目录内移动文件或文件夹，不覆盖已有目标。
+- `rename-folder-item`：经过 Raycast 确认后，重命名 Finder 当前目录内的单个文件或文件夹，不覆盖已有目标。
 - `trash-folder-items`：经过 Raycast 确认后，将 Finder 当前目录下的文件或文件夹移动到废纸篓。
 - `run-folder-shell-command`：经过 Raycast 确认后，在 Finder 当前目录下执行 shell 命令。
 

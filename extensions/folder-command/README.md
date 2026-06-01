@@ -22,6 +22,9 @@ osascript -e 'tell application "Finder" to POSIX path of (target of front window
 
 - `get-front-finder-folder`: returns the front Finder folder path.
 - `list-folder-files`: lists files in the front Finder folder.
+- `copy-folder-items`: copies files or folders within the front Finder folder after Raycast confirmation, without overwriting existing targets.
+- `move-folder-items`: moves files or folders within the front Finder folder after Raycast confirmation, without overwriting existing targets.
+- `rename-folder-item`: renames one file or folder in the front Finder folder after Raycast confirmation, without overwriting existing targets.
 - `trash-folder-items`: moves files under the front Finder folder to Trash after Raycast confirmation.
 - `run-folder-shell-command`: runs a shell command in the front Finder folder after Raycast confirmation.
 

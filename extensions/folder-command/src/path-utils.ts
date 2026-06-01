@@ -1,5 +1,5 @@
 import { existsSync, realpathSync, statSync } from "fs";
-import { isAbsolute, resolve } from "path";
+import { dirname, isAbsolute, resolve } from "path";
 
 export function ensureInsideFolder(targetPath: string, folderPath: string) {
   if (!existsSync(targetPath)) {
@@ -18,6 +18,20 @@ export function ensureInsideFolder(targetPath: string, folderPath: string) {
 
 export function resolveFolderPath(inputPath: string, folderPath: string) {
   return isAbsolute(inputPath) ? inputPath : resolve(folderPath, inputPath);
+}
+
+export function ensureTargetInsideFolder(
+  targetPath: string,
+  folderPath: string,
+) {
+  const parentPath = dirname(targetPath);
+  ensureInsideFolder(parentPath, folderPath);
+
+  if (existsSync(targetPath)) {
+    ensureInsideFolder(targetPath, folderPath);
+  }
+
+  return targetPath;
 }
 
 export function ensureDirectory(folderPath: string) {
