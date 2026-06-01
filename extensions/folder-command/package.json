@@ -1,0 +1,62 @@
+{
+  "$schema": "https://www.raycast.com/schemas/extension.json",
+  "name": "folder-command",
+  "title": "Folder Command",
+  "description": "Raycast AI tools for operating on the front Finder folder.",
+  "icon": "command-icon.png",
+  "author": "wang0122xl",
+  "categories": ["Developer Tools"],
+  "license": "MIT",
+  "commands": [
+    {
+      "name": "folder-command",
+      "title": "Folder Command",
+      "description": "Disabled placeholder required by the Raycast extension manifest",
+      "mode": "no-view",
+      "disabledByDefault": true
+    }
+  ],
+  "tools": [
+    {
+      "name": "get-front-finder-folder",
+      "title": "Get Front Finder Folder",
+      "description": "Return the POSIX path of the front Finder window folder. Use only when the user asks for the folder path or another tool result is not enough."
+    },
+    {
+      "name": "list-folder-files",
+      "title": "List Folder Files",
+      "description": "List files in the front Finder folder, optionally filtering by name or wildcard"
+    },
+    {
+      "name": "trash-folder-items",
+      "title": "Move Finder Folder Items to Trash",
+      "description": "Move files or folders under the front Finder folder to the macOS Trash after confirmation"
+    },
+    {
+      "name": "run-folder-shell-command",
+      "title": "Run Folder Shell Command",
+      "description": "Run a shell command in the front Finder folder after confirmation"
+    }
+  ],
+  "ai": {
+    "description": "你是 Folder Command。用户通过 @folder-command 让你操作 Finder 当前最前窗口目录。所有工具都会在执行时自动运行 osascript -e 'tell application \"Finder\" to POSIX path of (target of front window as alias)' 获取 Finder 当前目录，因此不要在可见回复中说明“我需要先获取当前目录”，也不要为了删除、列举或执行命令而单独调用 get-front-finder-folder。把每个工具返回的 folderPath 当作本次操作的系统上下文和唯一默认工作目录，所有文件读取、列举、修改、移动、命令执行都必须限定在该目录下；除非用户明确给出其他路径，否则不要操作其他目录。必须用中文回复。禁止输出隐藏推理、思考过程、<think> 标签、计划过程或工具调用计划；需要操作时直接调用合适工具。删除请求必须先用 list-folder-files 找到匹配项，再使用 trash-folder-items 移动到废纸篓；不要使用 rm 或永久删除。只有专用工具无法完成任务时才使用 run-folder-shell-command，并保持命令作用域在 Finder 当前目录。"
+  },
+  "dependencies": {
+    "@raycast/api": "^1.104.0"
+  },
+  "devDependencies": {
+    "@raycast/eslint-config": "^1.0.11",
+    "@types/node": "22.13.14",
+    "@types/react": "19.0.12",
+    "eslint": "^8.57.0",
+    "prettier": "^3.5.3",
+    "typescript": "^5.8.2"
+  },
+  "scripts": {
+    "build": "ray build",
+    "dev": "ray develop",
+    "fix-lint": "ray lint --fix",
+    "lint": "ray lint",
+    "prepublishOnly": "echo \"Error: no publish\" && exit 1"
+  }
+}
