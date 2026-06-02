@@ -3,10 +3,12 @@ import { execFile } from "child_process";
 import { promisify } from "util";
 import { formatFinderError, getScopedFinderFolderPath } from "../finder";
 import { ensureDirectory, truncateText } from "../path-utils";
+import { showTaskFailure, showTaskSuccess } from "../toast-utils";
 
 const execFileAsync = promisify(execFile);
 
 type Input = {
+  contextToken?: string;
   command: string;
   reason?: string;
   requiresAuthorization?: boolean;
@@ -47,7 +49,7 @@ function ensureReadOnlyCommand(input: Input, command: string) {
 
 export default async function RunFolderShellCommand(input: Input) {
   try {
-    const folderPath = await getScopedFinderFolderPath();
+    const folderPath = await getScopedFinderFolderPath(input.contextToken);
     ensureDirectory(folderPath);
 
     const command = validateCommand(input.command);
@@ -62,6 +64,7 @@ export default async function RunFolderShellCommand(input: Input) {
         maxBuffer: 1024 * 1024,
       },
     );
+    await showTaskSuccess("Finder Command completed", "Command completed.");
 
     return {
       type: "success",
@@ -78,9 +81,12 @@ export default async function RunFolderShellCommand(input: Input) {
       ),
     };
   } catch (error) {
+    const message = formatFinderError(error);
+    await showTaskFailure("Finder Command failed", message);
+
     return {
       type: "error",
-      message: formatFinderError(error),
+      message,
     };
   }
 }

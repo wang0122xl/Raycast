@@ -5,14 +5,18 @@ import {
   createJournalOperation,
   recordOperation,
 } from "../operation-journal";
+import { showTaskFailure, showTaskSuccess } from "../toast-utils";
 import { resolveFileOperation } from "./file-operation-utils";
 
 type Input = {
+  contextToken?: string;
+  sourceDirectory?: string;
   paths?: string;
   destinationDirectory?: string;
   newName?: string;
   pattern?: string;
   fileExtension?: string;
+  fileExtensions?: string;
   maxDepth?: number;
   includeHidden?: boolean;
   reason?: string;
@@ -42,6 +46,10 @@ export default async function CopyFolderItems(input: Input) {
       summary: `Copied ${operation.sources.length} item(s)`,
       actions: operation.targets.map((path) => ({ type: "remove", path })),
     });
+    await showTaskSuccess(
+      "Finder Command completed",
+      `Copied ${operation.sources.length} item(s).`,
+    );
 
     return {
       type: "success",
@@ -55,10 +63,12 @@ export default async function CopyFolderItems(input: Input) {
       rmSync(target, { recursive: true, force: true });
     }
     if (operationId) cleanupJournalOperation(operationId);
+    const message = formatFinderError(error);
+    await showTaskFailure("Finder Command failed", message);
 
     return {
       type: "error",
-      message: formatFinderError(error),
+      message,
     };
   }
 }

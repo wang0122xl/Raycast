@@ -5,6 +5,7 @@ import {
   ensureDirectory,
   ensureInsideFolder,
   ensureTargetInsideFolder,
+  resolveScopedDirectory,
   resolveFolderPath,
 } from "../path-utils";
 
@@ -30,10 +31,18 @@ function wildcardToRegExp(pattern: string): RegExp {
 }
 
 function matchesPattern(path: string, pattern?: string) {
-  const query = pattern?.trim();
-  if (!query) return true;
-  if (query.includes("*")) return wildcardToRegExp(query).test(path);
-  return path.toLowerCase().includes(query.toLowerCase());
+  const queries = pattern
+    ?.split(/[\r\n,;|]+/)
+    .map((query) => query.trim())
+    .filter(Boolean);
+
+  if (!queries || queries.length === 0) return true;
+
+  return queries.some((query) =>
+    query.includes("*")
+      ? wildcardToRegExp(query).test(path)
+      : path.toLowerCase().includes(query.toLowerCase()),
+  );
 }
 
 function normalizeExtension(fileExtension?: string) {
@@ -42,22 +51,40 @@ function normalizeExtension(fileExtension?: string) {
   return normalized.startsWith(".") ? normalized : `.${normalized}`;
 }
 
+function normalizeExtensions(input: {
+  fileExtension?: string;
+  fileExtensions?: string;
+}) {
+  const rawExtensions = [input.fileExtension, input.fileExtensions]
+    .filter(Boolean)
+    .flatMap((value) => String(value).split(/[\s,;|]+/))
+    .map((value) => normalizeExtension(value))
+    .filter((value): value is string => Boolean(value));
+
+  return new Set(rawExtensions);
+}
+
 function findMatchingFiles(
   input: {
     pattern?: string;
     fileExtension?: string;
+    fileExtensions?: string;
     maxDepth?: number;
     includeHidden?: boolean;
   },
   folderPath: string,
+  sourceDirectory: string,
 ) {
-  const extension = normalizeExtension(input.fileExtension);
-  const maxDepth = Math.min(Math.max(input.maxDepth ?? 0, 0), 5);
+  const extensions = normalizeExtensions(input);
+  const maxDepth =
+    input.maxDepth === undefined
+      ? Number.POSITIVE_INFINITY
+      : Math.max(Math.floor(input.maxDepth), 0);
   const includeHidden = input.includeHidden ?? false;
   const matches: string[] = [];
 
   function walk(dir: string, depth: number) {
-    if (depth > maxDepth || matches.length >= 300) return;
+    if (depth > maxDepth) return;
 
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       if (!includeHidden && entry.name.startsWith(".")) continue;
@@ -72,7 +99,8 @@ function findMatchingFiles(
 
       if (
         statSync(fullPath).isFile() &&
-        (!extension || extname(entry.name).toLowerCase() === extension) &&
+        (extensions.size === 0 ||
+          extensions.has(extname(entry.name).toLowerCase())) &&
         matchesPattern(relativePath, input.pattern)
       ) {
         matches.push(fullPath);
@@ -80,7 +108,7 @@ function findMatchingFiles(
     }
   }
 
-  walk(folderPath, 0);
+  walk(sourceDirectory, 0);
   return matches.sort((a, b) =>
     relative(folderPath, a).localeCompare(relative(folderPath, b), undefined, {
       numeric: true,
@@ -137,25 +165,35 @@ function ensureNotNestedInSource(sourcePath: string, targetPath: string) {
 }
 
 export async function resolveFileOperation(input: {
+  contextToken?: string;
+  sourceDirectory?: string;
   paths?: string;
   destinationDirectory?: string;
   newName?: string;
   pattern?: string;
   fileExtension?: string;
+  fileExtensions?: string;
   maxDepth?: number;
   includeHidden?: boolean;
 }): Promise<ResolvedFileOperation> {
-  const folderPath = await getScopedFinderFolderPath();
+  const folderPath = await getScopedFinderFolderPath(input.contextToken);
   ensureDirectory(folderPath);
+  const sourceDirectory = resolveScopedDirectory(
+    input.sourceDirectory,
+    folderPath,
+  );
 
   const rawPaths = parsePaths(input.paths ?? "");
+  const hasFilters = Boolean(
+    input.pattern || input.fileExtension || input.fileExtensions,
+  );
   const filteredPaths =
-    rawPaths.length === 0 && (input.pattern || input.fileExtension)
-      ? findMatchingFiles(input, folderPath)
+    rawPaths.length === 0 && hasFilters
+      ? findMatchingFiles(input, folderPath, sourceDirectory)
       : [];
 
   if (rawPaths.length === 0 && filteredPaths.length === 0) {
-    if (input.pattern || input.fileExtension) {
+    if (hasFilters) {
       throw new Error("No matching files were found.");
     }
 
@@ -195,10 +233,11 @@ export async function resolveFileOperation(input: {
 }
 
 export async function resolveRenameOperation(input: {
+  contextToken?: string;
   path: string;
   newName: string;
 }) {
-  const folderPath = await getScopedFinderFolderPath();
+  const folderPath = await getScopedFinderFolderPath(input.contextToken);
   ensureDirectory(folderPath);
 
   const source = ensureInsideFolder(

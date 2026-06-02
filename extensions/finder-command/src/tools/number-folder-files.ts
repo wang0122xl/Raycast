@@ -11,10 +11,15 @@ import {
   ensureDirectory,
   ensureInsideFolder,
   ensureTargetInsideFolder,
+  resolveScopedDirectory,
 } from "../path-utils";
+import { showTaskFailure, showTaskSuccess } from "../toast-utils";
 
 type Input = {
+  contextToken?: string;
+  sourceDirectory?: string;
   fileExtension?: string;
+  fileExtensions?: string;
   pattern?: string;
   startNumber?: number;
   padding?: number;
@@ -37,10 +42,18 @@ function wildcardToRegExp(pattern: string): RegExp {
 }
 
 function matchesPattern(path: string, pattern?: string) {
-  const query = pattern?.trim();
-  if (!query) return true;
-  if (query.includes("*")) return wildcardToRegExp(query).test(path);
-  return path.toLowerCase().includes(query.toLowerCase());
+  const queries = pattern
+    ?.split(/[\r\n,;|]+/)
+    .map((query) => query.trim())
+    .filter(Boolean);
+
+  if (!queries || queries.length === 0) return true;
+
+  return queries.some((query) =>
+    query.includes("*")
+      ? wildcardToRegExp(query).test(path)
+      : path.toLowerCase().includes(query.toLowerCase()),
+  );
 }
 
 function normalizeExtension(fileExtension?: string) {
@@ -49,14 +62,31 @@ function normalizeExtension(fileExtension?: string) {
   return normalized.startsWith(".") ? normalized : `.${normalized}`;
 }
 
-function findMatchingFiles(input: Input, folderPath: string) {
-  const extension = normalizeExtension(input.fileExtension);
-  const maxDepth = Math.min(Math.max(input.maxDepth ?? 0, 0), 5);
+function normalizeExtensions(input: Input) {
+  const rawExtensions = [input.fileExtension, input.fileExtensions]
+    .filter(Boolean)
+    .flatMap((value) => String(value).split(/[\s,;|]+/))
+    .map((value) => normalizeExtension(value))
+    .filter((value): value is string => Boolean(value));
+
+  return new Set(rawExtensions);
+}
+
+function findMatchingFiles(
+  input: Input,
+  folderPath: string,
+  sourceDirectory: string,
+) {
+  const extensions = normalizeExtensions(input);
+  const maxDepth =
+    input.maxDepth === undefined
+      ? Number.POSITIVE_INFINITY
+      : Math.max(Math.floor(input.maxDepth), 0);
   const includeHidden = input.includeHidden ?? false;
   const matches: string[] = [];
 
   function walk(dir: string, depth: number) {
-    if (depth > maxDepth || matches.length >= 300) return;
+    if (depth > maxDepth) return;
 
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       if (!includeHidden && entry.name.startsWith(".")) continue;
@@ -71,7 +101,8 @@ function findMatchingFiles(input: Input, folderPath: string) {
 
       if (
         statSync(fullPath).isFile() &&
-        (!extension || extname(entry.name).toLowerCase() === extension) &&
+        (extensions.size === 0 ||
+          extensions.has(extname(entry.name).toLowerCase())) &&
         matchesPattern(relativePath, input.pattern)
       ) {
         matches.push(fullPath);
@@ -79,7 +110,7 @@ function findMatchingFiles(input: Input, folderPath: string) {
     }
   }
 
-  walk(folderPath, 0);
+  walk(sourceDirectory, 0);
   return matches.sort((a, b) =>
     relative(folderPath, a).localeCompare(relative(folderPath, b), undefined, {
       numeric: true,
@@ -92,9 +123,13 @@ function buildTargetName(index: number, extension: string, padding: number) {
   return `${String(index).padStart(padding, "0")}${extension}`;
 }
 
-function buildRenamePlan(input: Input, folderPath: string): RenamePlanItem[] {
-  const sources = findMatchingFiles(input, folderPath).map((path) =>
-    ensureInsideFolder(path, folderPath),
+function buildRenamePlan(
+  input: Input,
+  folderPath: string,
+  sourceDirectory: string,
+): RenamePlanItem[] {
+  const sources = findMatchingFiles(input, folderPath, sourceDirectory).map(
+    (path) => ensureInsideFolder(path, folderPath),
   );
 
   if (sources.length === 0) {
@@ -108,8 +143,7 @@ function buildRenamePlan(input: Input, folderPath: string): RenamePlanItem[] {
   const stamp = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
   return sources.map((source, index) => {
-    const targetExtension =
-      normalizeExtension(input.fileExtension) ?? extname(source);
+    const targetExtension = extname(source);
     const target = ensureTargetInsideFolder(
       join(
         dirname(source),
@@ -149,10 +183,14 @@ export async function numberFolderFiles(
   const completedFinal: RenamePlanItem[] = [];
 
   try {
-    const folderPath = await getScopedFinderFolderPath();
+    const folderPath = await getScopedFinderFolderPath(input.contextToken);
     ensureDirectory(folderPath);
+    const sourceDirectory = resolveScopedDirectory(
+      input.sourceDirectory,
+      folderPath,
+    );
 
-    const plan = buildRenamePlan(input, folderPath);
+    const plan = buildRenamePlan(input, folderPath, sourceDirectory);
     operationId = await createJournalOperation(tool);
     const restoreActions = snapshotItems({
       operationId,
@@ -183,6 +221,10 @@ export async function numberFolderFiles(
         ...restoreActions,
       ],
     });
+    await showTaskSuccess(
+      "Finder Command completed",
+      `Renamed ${plan.length} file(s).`,
+    );
 
     return {
       type: "success",
@@ -219,10 +261,12 @@ export async function numberFolderFiles(
       }
     }
     if (operationId) cleanupJournalOperation(operationId);
+    const message = formatFinderError(error);
+    await showTaskFailure("Finder Command failed", message);
 
     return {
       type: "error",
-      message: formatFinderError(error),
+      message,
     };
   }
 }

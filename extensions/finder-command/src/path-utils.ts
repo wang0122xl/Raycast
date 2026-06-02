@@ -1,5 +1,5 @@
 import { existsSync, realpathSync, statSync } from "fs";
-import { dirname, isAbsolute, resolve } from "path";
+import { basename, dirname, isAbsolute, join, resolve } from "path";
 
 export function ensureInsideFolder(targetPath: string, folderPath: string) {
   if (!existsSync(targetPath)) {
@@ -39,6 +39,23 @@ export function ensureDirectory(folderPath: string) {
   if (!stat.isDirectory()) {
     throw new Error(`Path is not a directory: ${folderPath}`);
   }
+}
+
+export function resolveScopedDirectory(
+  sourceDirectory: string | undefined,
+  folderPath: string,
+) {
+  const requestedDirectory = sourceDirectory?.trim();
+  const directoryName = requestedDirectory
+    ? basename(requestedDirectory.replace(/\/+$/, ""))
+    : "";
+  const directory = ensureInsideFolder(
+    directoryName ? join(folderPath, directoryName) : folderPath,
+    folderPath,
+  );
+  ensureDirectory(directory);
+
+  return directory;
 }
 
 export function truncateText(text: string, maxLength = 12_000) {

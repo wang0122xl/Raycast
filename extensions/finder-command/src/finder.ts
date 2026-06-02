@@ -12,7 +12,12 @@ const FINDER_FOLDER_SCRIPT =
 
 interface FinderFolderContext {
   folderPath: string;
+  contextToken: string;
   updatedAt: number;
+}
+
+function createContextToken() {
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
 export async function getFrontFinderFolderPath(): Promise<string> {
@@ -34,8 +39,10 @@ export async function refreshFrontFinderFolderContext() {
   await beginNewUndoScope();
 
   const folderPath = await getFrontFinderFolderPath();
+  const contextToken = createContextToken();
   const context: FinderFolderContext = {
     folderPath,
+    contextToken,
     updatedAt: Date.now(),
   };
   await LocalStorage.setItem(
@@ -43,29 +50,47 @@ export async function refreshFrontFinderFolderContext() {
     JSON.stringify(context),
   );
 
-  return folderPath;
+  return { folderPath, contextToken };
 }
 
-export async function getScopedFinderFolderPath() {
+export async function getScopedFinderFolderPath(contextToken?: string) {
+  if (!contextToken?.trim()) {
+    throw new Error(
+      "Missing contextToken. Call get-front-finder-folder at the start of this @finder-command request and pass its contextToken to subsequent tools.",
+    );
+  }
+
   const rawContext = await LocalStorage.getItem<string>(
     FINDER_FOLDER_CONTEXT_KEY,
   );
 
   if (rawContext) {
+    let context: FinderFolderContext;
     try {
-      const context = JSON.parse(rawContext) as FinderFolderContext;
-      if (
-        context.folderPath &&
-        Date.now() - context.updatedAt <= FINDER_FOLDER_CONTEXT_MAX_AGE_MS
-      ) {
-        return context.folderPath;
-      }
+      context = JSON.parse(rawContext) as FinderFolderContext;
     } catch {
       await LocalStorage.removeItem(FINDER_FOLDER_CONTEXT_KEY);
+      throw new Error(
+        "The Finder folder context is invalid. Call get-front-finder-folder again for this @finder-command request.",
+      );
     }
+
+    if (
+      context.folderPath &&
+      context.contextToken === contextToken &&
+      Date.now() - context.updatedAt <= FINDER_FOLDER_CONTEXT_MAX_AGE_MS
+    ) {
+      return context.folderPath;
+    }
+
+    throw new Error(
+      "The Finder folder contextToken is stale or belongs to a previous request. Call get-front-finder-folder again for this @finder-command request.",
+    );
   }
 
-  return refreshFrontFinderFolderContext();
+  throw new Error(
+    "No locked Finder folder is available. Start a normal request with get-front-finder-folder first.",
+  );
 }
 
 export function formatFinderError(error: unknown): string {

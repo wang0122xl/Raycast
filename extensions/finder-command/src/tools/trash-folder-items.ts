@@ -11,13 +11,18 @@ import {
 import {
   ensureDirectory,
   ensureInsideFolder,
+  resolveScopedDirectory,
   resolveFolderPath,
 } from "../path-utils";
+import { showTaskFailure, showTaskSuccess } from "../toast-utils";
 
 type Input = {
+  contextToken?: string;
+  sourceDirectory?: string;
   paths?: string;
   pattern?: string;
   fileExtension?: string;
+  fileExtensions?: string;
   maxDepth?: number;
   includeHidden?: boolean;
   reason?: string;
@@ -38,10 +43,18 @@ function wildcardToRegExp(pattern: string): RegExp {
 }
 
 function matchesPattern(path: string, pattern?: string) {
-  const query = pattern?.trim();
-  if (!query) return true;
-  if (query.includes("*")) return wildcardToRegExp(query).test(path);
-  return path.toLowerCase().includes(query.toLowerCase());
+  const queries = pattern
+    ?.split(/[\r\n,;|]+/)
+    .map((query) => query.trim())
+    .filter(Boolean);
+
+  if (!queries || queries.length === 0) return true;
+
+  return queries.some((query) =>
+    query.includes("*")
+      ? wildcardToRegExp(query).test(path)
+      : path.toLowerCase().includes(query.toLowerCase()),
+  );
 }
 
 function normalizeExtension(fileExtension?: string) {
@@ -50,14 +63,31 @@ function normalizeExtension(fileExtension?: string) {
   return normalized.startsWith(".") ? normalized : `.${normalized}`;
 }
 
-function findMatchingFiles(input: Input, folderPath: string) {
-  const extension = normalizeExtension(input.fileExtension);
-  const maxDepth = Math.min(Math.max(input.maxDepth ?? 2, 0), 5);
+function normalizeExtensions(input: Input) {
+  const rawExtensions = [input.fileExtension, input.fileExtensions]
+    .filter(Boolean)
+    .flatMap((value) => String(value).split(/[\s,;|]+/))
+    .map((value) => normalizeExtension(value))
+    .filter((value): value is string => Boolean(value));
+
+  return new Set(rawExtensions);
+}
+
+function findMatchingFiles(
+  input: Input,
+  folderPath: string,
+  sourceDirectory: string,
+) {
+  const extensions = normalizeExtensions(input);
+  const maxDepth =
+    input.maxDepth === undefined
+      ? Number.POSITIVE_INFINITY
+      : Math.max(Math.floor(input.maxDepth), 0);
   const includeHidden = input.includeHidden ?? false;
   const matches: string[] = [];
 
   function walk(dir: string, depth: number) {
-    if (depth > maxDepth || matches.length >= 300) return;
+    if (depth > maxDepth) return;
 
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       if (!includeHidden && entry.name.startsWith(".")) continue;
@@ -72,7 +102,8 @@ function findMatchingFiles(input: Input, folderPath: string) {
 
       if (
         statSync(fullPath).isFile() &&
-        (!extension || extname(entry.name).toLowerCase() === extension) &&
+        (extensions.size === 0 ||
+          extensions.has(extname(entry.name).toLowerCase())) &&
         matchesPattern(relativePath, input.pattern)
       ) {
         matches.push(fullPath);
@@ -80,32 +111,38 @@ function findMatchingFiles(input: Input, folderPath: string) {
     }
   }
 
-  walk(folderPath, 0);
+  walk(sourceDirectory, 0);
   return matches;
 }
 
 async function resolveInputPaths(input: Input) {
-  const folderPath = await getScopedFinderFolderPath();
+  const folderPath = await getScopedFinderFolderPath(input.contextToken);
   ensureDirectory(folderPath);
+  const sourceDirectory = resolveScopedDirectory(
+    input.sourceDirectory,
+    folderPath,
+  );
 
   const paths = parsePaths(input.paths ?? "");
 
   if (paths.length === 0) {
-    if (!input.pattern && !input.fileExtension) {
+    if (!input.pattern && !input.fileExtension && !input.fileExtensions) {
       throw new Error(
-        "No paths or filters were provided. Pass paths, fileExtension, or pattern.",
+        "No paths or filters were provided. Pass paths, fileExtension, fileExtensions, or pattern.",
       );
     }
 
-    const resolvedPaths = findMatchingFiles(input, folderPath).map((path) =>
-      ensureInsideFolder(path, folderPath),
-    );
+    const resolvedPaths = findMatchingFiles(
+      input,
+      folderPath,
+      sourceDirectory,
+    ).map((path) => ensureInsideFolder(path, folderPath));
 
     if (resolvedPaths.length > 0) {
       return { folderPath, resolvedPaths };
     }
 
-    if (input.pattern || input.fileExtension) {
+    if (input.pattern || input.fileExtension || input.fileExtensions) {
       throw new Error("No matching files were found.");
     }
   }
@@ -140,6 +177,10 @@ export default async function TrashFolderItems(input: Input) {
       summary: `Moved ${resolvedPaths.length} item(s) to Trash`,
       actions: restoreActions,
     });
+    await showTaskSuccess(
+      "Finder Command completed",
+      `Moved ${resolvedPaths.length} item(s) to Trash.`,
+    );
 
     return {
       type: "success",
@@ -167,10 +208,12 @@ export default async function TrashFolderItems(input: Input) {
       }
     }
     if (operationId) cleanupJournalOperation(operationId);
+    const message = formatFinderError(error);
+    await showTaskFailure("Finder Command failed", message);
 
     return {
       type: "error",
-      message: formatFinderError(error),
+      message,
     };
   }
 }

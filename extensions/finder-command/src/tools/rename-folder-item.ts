@@ -6,9 +6,11 @@ import {
   recordOperation,
   snapshotItems,
 } from "../operation-journal";
+import { showTaskFailure, showTaskSuccess } from "../toast-utils";
 import { resolveRenameOperation } from "./file-operation-utils";
 
 type Input = {
+  contextToken?: string;
   path: string;
   newName: string;
   reason?: string;
@@ -43,6 +45,7 @@ export default async function RenameFolderItem(input: Input) {
         ...restoreActions,
       ],
     });
+    await showTaskSuccess("Finder Command completed", "Renamed 1 item.");
 
     return {
       type: "success",
@@ -60,10 +63,12 @@ export default async function RenameFolderItem(input: Input) {
       }
     }
     if (operationId) cleanupJournalOperation(operationId);
+    const message = formatFinderError(error);
+    await showTaskFailure("Finder Command failed", message);
 
     return {
       type: "error",
-      message: formatFinderError(error),
+      message,
     };
   }
 }

@@ -1,9 +1,16 @@
 import { readdirSync, statSync } from "fs";
 import { join, relative } from "path";
 import { formatFinderError, getScopedFinderFolderPath } from "../finder";
-import { ensureDirectory, truncateText } from "../path-utils";
+import {
+  ensureDirectory,
+  resolveScopedDirectory,
+  truncateText,
+} from "../path-utils";
+import { showTaskFailure, showTaskSuccess } from "../toast-utils";
 
 type Input = {
+  contextToken?: string;
+  sourceDirectory?: string;
   pattern?: string;
   maxDepth?: number;
   includeHidden?: boolean;
@@ -37,14 +44,23 @@ function wildcardToRegExp(pattern: string): RegExp {
 }
 
 function matchesPattern(path: string, pattern?: string) {
-  const query = pattern?.trim();
-  if (!query) return true;
-  if (query.includes("*")) return wildcardToRegExp(query).test(path);
-  return path.toLowerCase().includes(query.toLowerCase());
+  const queries = pattern
+    ?.split(/[\r\n,;|]+/)
+    .map((query) => query.trim())
+    .filter(Boolean);
+
+  if (!queries || queries.length === 0) return true;
+
+  return queries.some((query) =>
+    query.includes("*")
+      ? wildcardToRegExp(query).test(path)
+      : path.toLowerCase().includes(query.toLowerCase()),
+  );
 }
 
 function listEntries(
   folderPath: string,
+  sourceDirectory: string,
   pattern: string | undefined,
   maxDepth: number,
   includeHidden: boolean,
@@ -52,7 +68,7 @@ function listEntries(
   const entries: FileEntry[] = [];
 
   function walk(dir: string, depth: number) {
-    if (depth > maxDepth || entries.length >= 300) return;
+    if (depth > maxDepth) return;
 
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       if (!includeHidden && entry.name.startsWith(".")) continue;
@@ -75,26 +91,39 @@ function listEntries(
     }
   }
 
-  walk(folderPath, 0);
+  walk(sourceDirectory, 0);
   return entries;
 }
 
 export default async function ListFolderFiles(input: Input) {
   try {
-    const folderPath = await getScopedFinderFolderPath();
+    const folderPath = await getScopedFinderFolderPath(input.contextToken);
     ensureDirectory(folderPath);
+    const sourceDirectory = resolveScopedDirectory(
+      input.sourceDirectory,
+      folderPath,
+    );
 
-    const maxDepth = Math.min(Math.max(input.maxDepth ?? 2, 0), 5);
+    const maxDepth =
+      input.maxDepth === undefined
+        ? Number.POSITIVE_INFINITY
+        : Math.max(Math.floor(input.maxDepth), 0);
     const entries = listEntries(
       folderPath,
+      sourceDirectory,
       input.pattern,
       maxDepth,
       input.includeHidden ?? false,
+    );
+    await showTaskSuccess(
+      "Finder Command completed",
+      `Listed ${entries.length} item(s).`,
     );
 
     return {
       type: "success",
       folderPath,
+      sourceDirectory,
       count: entries.length,
       extensionCounts: buildExtensionCounts(entries),
       entries,
@@ -111,9 +140,12 @@ export default async function ListFolderFiles(input: Input) {
       ),
     };
   } catch (error) {
+    const message = formatFinderError(error);
+    await showTaskFailure("Finder Command failed", message);
+
     return {
       type: "error",
-      message: formatFinderError(error),
+      message,
     };
   }
 }
