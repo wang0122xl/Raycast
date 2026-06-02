@@ -13,12 +13,12 @@ type ExtensionPreferences = {}
 declare type Preferences = ExtensionPreferences
 
 declare namespace Preferences {
-  /** Preferences accessible in the `folder-command` command */
-  export type FolderCommand = ExtensionPreferences & {}
+  /** Preferences accessible in the `finder-command` command */
+  export type FinderCommand = ExtensionPreferences & {}
 }
 
 declare namespace Arguments {
-  /** Arguments passed to the `folder-command` command */
-  export type FolderCommand = {}
+  /** Arguments passed to the `finder-command` command */
+  export type FinderCommand = {}
 }
 

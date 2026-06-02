@@ -1,0 +1,87 @@
+{
+  "$schema": "https://www.raycast.com/schemas/extension.json",
+  "name": "finder-command",
+  "title": "Finder Command",
+  "description": "Raycast AI tools for operating on the front Finder folder.",
+  "icon": "command-icon.png",
+  "author": "wang0122xl",
+  "categories": ["Developer Tools"],
+  "license": "MIT",
+  "commands": [
+    {
+      "name": "finder-command",
+      "title": "Finder Command",
+      "description": "Disabled placeholder required by the Raycast extension manifest",
+      "mode": "no-view",
+      "disabledByDefault": true
+    }
+  ],
+  "tools": [
+    {
+      "name": "get-front-finder-folder",
+      "title": "Get Front Finder Folder",
+      "description": "Lock and return the POSIX path of the front Finder window folder for the current @finder-command request."
+    },
+    {
+      "name": "list-folder-files",
+      "title": "List Folder Files",
+      "description": "List files in the locked Finder folder once, optionally filtering by name or wildcard. Returns extensionCounts for generic extension inference."
+    },
+    {
+      "name": "copy-folder-items",
+      "title": "Copy Finder Folder Items",
+      "description": "Copy files or folders within the locked Finder folder, without overwriting existing targets. Pass paths, or filter with fileExtension/pattern."
+    },
+    {
+      "name": "move-folder-items",
+      "title": "Move Finder Folder Items",
+      "description": "Move files or folders within the locked Finder folder, without overwriting existing targets. Pass paths, or filter with fileExtension/pattern."
+    },
+    {
+      "name": "rename-folder-item",
+      "title": "Rename Finder Folder Item",
+      "description": "Rename one file or folder inside the locked Finder folder, without overwriting existing targets."
+    },
+    {
+      "name": "number-folder-files",
+      "title": "Number Finder Folder Files",
+      "description": "Rename matching files in the locked Finder folder to sequential names while preserving the selected extension. Filter with fileExtension/pattern; optional startNumber, padding, maxDepth."
+    },
+    {
+      "name": "trash-folder-items",
+      "title": "Move Finder Folder Items to Trash",
+      "description": "Move files under the locked Finder folder to the macOS Trash. Pass paths, or filter with fileExtension/pattern."
+    },
+    {
+      "name": "run-folder-shell-command",
+      "title": "Run Folder Shell Command",
+      "description": "Run a read-only shell command in the locked Finder folder. File-changing shell commands are blocked because they cannot be safely undone."
+    },
+    {
+      "name": "undo-last-folder-operation",
+      "title": "Undo Last Finder Folder Operation",
+      "description": "Undo the latest reversible request recorded by Finder Command. Only one undo snapshot is kept; the next normal @finder-command request replaces the previous snapshot."
+    }
+  ],
+  "ai": {
+    "description": "你是 Finder Command，用于在 Raycast AI 中基于 Finder 当前最前窗口目录完成用户的自然语言文件和目录任务。除撤回请求外，每次普通 @finder-command 请求开始时，先调用 get-front-finder-folder 获取并锁定 targetFolder；这会开启新一轮撤回快照并覆盖上一轮快照。本轮请求内如果需要多次文件变更，继续使用同一轮快照，不要重新调用 get-front-finder-folder。后续工具返回的 folderPath 都视为本次请求的唯一默认工作目录。targetFolder 及其子目录内的读取、复制、移动、重命名、移入废纸篓无需二次授权；不要向用户重复确认。读取 targetFolder 外路径无需授权；任何 targetFolder 外写入、移动、删除、改权限或其他有副作用操作，必须先获得用户明确同意。用户说撤回、回退、undo、恢复刚才操作时，不要调用 get-front-finder-folder，直接调用 undo-last-folder-operation；只支持撤回最近一轮可回退普通请求，下一轮普通请求会覆盖上一份撤回快照。常见操作优先使用专用工具并尽量一次调用完成：如果用户明确给出后缀或通配条件，直接把 fileExtension 或 pattern 传给对应工具；如果用户只描述了泛类别或不明确匹配条件，只调用一次 list-folder-files，并根据返回的 entries 和 extensionCounts 推断本轮要操作的后缀或 paths，严禁反复调用 list-folder-files 探测。复制/移动/删除一批匹配项时直接给 copy-folder-items、move-folder-items、trash-folder-items 传 fileExtension 或 pattern，不要先 list 再拼 paths，除非用户没有给出明确后缀或匹配条件。单个重命名用 rename-folder-item（参数是 path 和 newName）；批量编号重命名用 number-folder-files，按用户给出的后缀或匹配条件传 fileExtension 或 pattern。删除只用 trash-folder-items 移到废纸篓；禁止使用 rm 或永久删除。run-folder-shell-command 只用于只读命令，不能用于会改变文件的 shell 命令，因为这类命令无法可靠撤回。必须用中文简短回复。不要输出 <think>、隐藏推理、工具调用计划或“我先...”过程说明；需要操作就直接调用工具，完成后只汇报结果或错误。"
+  },
+  "dependencies": {
+    "@raycast/api": "^1.104.0"
+  },
+  "devDependencies": {
+    "@raycast/eslint-config": "^1.0.11",
+    "@types/node": "22.13.14",
+    "@types/react": "19.0.12",
+    "eslint": "^8.57.0",
+    "prettier": "^3.5.3",
+    "typescript": "^5.8.2"
+  },
+  "scripts": {
+    "build": "ray build",
+    "dev": "ray develop",
+    "fix-lint": "ray lint --fix",
+    "lint": "ray lint",
+    "prepublishOnly": "echo \"Error: no publish\" && exit 1"
+  }
+}

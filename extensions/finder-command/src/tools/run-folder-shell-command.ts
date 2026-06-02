@@ -1,7 +1,7 @@
 import { Action, Tool } from "@raycast/api";
 import { execFile } from "child_process";
 import { promisify } from "util";
-import { formatFinderError, getFrontFinderFolderPath } from "../finder";
+import { formatFinderError, getScopedFinderFolderPath } from "../finder";
 import { ensureDirectory, truncateText } from "../path-utils";
 
 const execFileAsync = promisify(execFile);
@@ -9,20 +9,14 @@ const execFileAsync = promisify(execFile);
 type Input = {
   command: string;
   reason?: string;
+  requiresAuthorization?: boolean;
   destructive?: boolean;
 };
 
 const BLOCKED_COMMAND_PATTERN =
   /(^|[;&|()\s])(sudo|rm|unlink|srm|shred|mkfs|diskutil\s+erase|dd)(\s|$)/i;
-
-function isDestructiveCommand(command: string, destructive?: boolean) {
-  return (
-    Boolean(destructive) ||
-    /\b(mv|cp|chmod|chown|sed|perl|python|node|mkdir|rmdir|touch)\b/.test(
-      command,
-    )
-  );
-}
+const SIDE_EFFECT_COMMAND_PATTERN =
+  /(^|[;&|()\s])(mv|cp|chmod|chown|sed|perl|python|python3|node|mkdir|rmdir|touch|tee|tar|zip|unzip|rsync)(\s|$)|[>]{1,2}/i;
 
 function validateCommand(command: string) {
   const trimmed = command.trim();
@@ -39,12 +33,25 @@ function validateCommand(command: string) {
   return trimmed;
 }
 
+function ensureReadOnlyCommand(input: Input, command: string) {
+  if (
+    input.requiresAuthorization ||
+    input.destructive ||
+    SIDE_EFFECT_COMMAND_PATTERN.test(command)
+  ) {
+    throw new Error(
+      "Shell commands with file side effects are blocked because they cannot be safely undone. Use the dedicated copy, move, rename, number, or trash tools instead.",
+    );
+  }
+}
+
 export default async function RunFolderShellCommand(input: Input) {
   try {
-    const folderPath = await getFrontFinderFolderPath();
+    const folderPath = await getScopedFinderFolderPath();
     ensureDirectory(folderPath);
 
     const command = validateCommand(input.command);
+    ensureReadOnlyCommand(input, command);
     const { stdout, stderr } = await execFileAsync(
       "/bin/zsh",
       ["-lc", command],
@@ -80,20 +87,10 @@ export default async function RunFolderShellCommand(input: Input) {
 
 export const confirmation: Tool.Confirmation<Input> = async (input: Input) => {
   try {
-    const folderPath = await getFrontFinderFolderPath();
     const command = validateCommand(input.command);
+    ensureReadOnlyCommand(input, command);
 
-    return {
-      style: isDestructiveCommand(command, input.destructive)
-        ? Action.Style.Destructive
-        : Action.Style.Regular,
-      message: "Run this shell command in the front Finder folder?",
-      info: [
-        { name: "Finder Folder", value: folderPath },
-        { name: "Command", value: command },
-        { name: "Reason", value: input.reason },
-      ],
-    };
+    return undefined;
   } catch (error) {
     return {
       style: Action.Style.Destructive,

@@ -1,6 +1,6 @@
-import { existsSync, statSync } from "fs";
-import { basename, dirname, join, relative } from "path";
-import { getFrontFinderFolderPath } from "../finder";
+import { existsSync, readdirSync, statSync } from "fs";
+import { basename, dirname, extname, join, relative } from "path";
+import { getScopedFinderFolderPath } from "../finder";
 import {
   ensureDirectory,
   ensureInsideFolder,
@@ -20,6 +20,73 @@ export function parsePaths(rawPaths: string) {
     .split(/\r?\n|\|{2,}/)
     .map((path) => path.trim())
     .filter(Boolean);
+}
+
+function wildcardToRegExp(pattern: string): RegExp {
+  const escaped = pattern
+    .replace(/[|\\{}()[\]^$+?.]/g, "\\$&")
+    .replace(/\*/g, ".*");
+  return new RegExp(escaped, "i");
+}
+
+function matchesPattern(path: string, pattern?: string) {
+  const query = pattern?.trim();
+  if (!query) return true;
+  if (query.includes("*")) return wildcardToRegExp(query).test(path);
+  return path.toLowerCase().includes(query.toLowerCase());
+}
+
+function normalizeExtension(fileExtension?: string) {
+  const normalized = fileExtension?.trim().toLowerCase();
+  if (!normalized) return undefined;
+  return normalized.startsWith(".") ? normalized : `.${normalized}`;
+}
+
+function findMatchingFiles(
+  input: {
+    pattern?: string;
+    fileExtension?: string;
+    maxDepth?: number;
+    includeHidden?: boolean;
+  },
+  folderPath: string,
+) {
+  const extension = normalizeExtension(input.fileExtension);
+  const maxDepth = Math.min(Math.max(input.maxDepth ?? 0, 0), 5);
+  const includeHidden = input.includeHidden ?? false;
+  const matches: string[] = [];
+
+  function walk(dir: string, depth: number) {
+    if (depth > maxDepth || matches.length >= 300) return;
+
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (!includeHidden && entry.name.startsWith(".")) continue;
+
+      const fullPath = join(dir, entry.name);
+      const relativePath = relative(folderPath, fullPath);
+
+      if (entry.isDirectory()) {
+        walk(fullPath, depth + 1);
+        continue;
+      }
+
+      if (
+        statSync(fullPath).isFile() &&
+        (!extension || extname(entry.name).toLowerCase() === extension) &&
+        matchesPattern(relativePath, input.pattern)
+      ) {
+        matches.push(fullPath);
+      }
+    }
+  }
+
+  walk(folderPath, 0);
+  return matches.sort((a, b) =>
+    relative(folderPath, a).localeCompare(relative(folderPath, b), undefined, {
+      numeric: true,
+      sensitivity: "base",
+    }),
+  );
 }
 
 function validateSingleNewName(newName: string) {
@@ -70,19 +137,32 @@ function ensureNotNestedInSource(sourcePath: string, targetPath: string) {
 }
 
 export async function resolveFileOperation(input: {
-  paths: string;
+  paths?: string;
   destinationDirectory?: string;
   newName?: string;
+  pattern?: string;
+  fileExtension?: string;
+  maxDepth?: number;
+  includeHidden?: boolean;
 }): Promise<ResolvedFileOperation> {
-  const folderPath = await getFrontFinderFolderPath();
+  const folderPath = await getScopedFinderFolderPath();
   ensureDirectory(folderPath);
 
-  const rawPaths = parsePaths(input.paths);
-  if (rawPaths.length === 0) {
+  const rawPaths = parsePaths(input.paths ?? "");
+  const filteredPaths =
+    rawPaths.length === 0 && (input.pattern || input.fileExtension)
+      ? findMatchingFiles(input, folderPath)
+      : [];
+
+  if (rawPaths.length === 0 && filteredPaths.length === 0) {
+    if (input.pattern || input.fileExtension) {
+      throw new Error("No matching files were found.");
+    }
+
     throw new Error("No paths were provided.");
   }
 
-  const sources = rawPaths.map((path) =>
+  const sources = (rawPaths.length > 0 ? rawPaths : filteredPaths).map((path) =>
     ensureInsideFolder(resolveFolderPath(path, folderPath), folderPath),
   );
   const destinationDirectory = ensureInsideFolder(
@@ -118,7 +198,7 @@ export async function resolveRenameOperation(input: {
   path: string;
   newName: string;
 }) {
-  const folderPath = await getFrontFinderFolderPath();
+  const folderPath = await getScopedFinderFolderPath();
   ensureDirectory(folderPath);
 
   const source = ensureInsideFolder(

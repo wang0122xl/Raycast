@@ -1,0 +1,69 @@
+import { renameSync } from "fs";
+import { formatFinderError } from "../finder";
+import {
+  cleanupJournalOperation,
+  createJournalOperation,
+  recordOperation,
+  snapshotItems,
+} from "../operation-journal";
+import { resolveRenameOperation } from "./file-operation-utils";
+
+type Input = {
+  path: string;
+  newName: string;
+  reason?: string;
+};
+
+export default async function RenameFolderItem(input: Input) {
+  let operationId: string | undefined;
+  let completedRename: { source: string; target: string } | undefined;
+
+  try {
+    const operation = await resolveRenameOperation(input);
+    operationId = await createJournalOperation("rename-folder-item");
+    const restoreActions = snapshotItems({
+      operationId,
+      folderPath: operation.folderPath,
+      paths: [operation.source],
+    });
+
+    renameSync(operation.source, operation.target);
+    completedRename = { source: operation.source, target: operation.target };
+    await recordOperation({
+      operationId,
+      tool: "rename-folder-item",
+      folderPath: operation.folderPath,
+      summary: `Renamed ${operation.source} to ${operation.target}`,
+      actions: [
+        {
+          type: "remove",
+          path: operation.target,
+          sourcePath: operation.source,
+        },
+        ...restoreActions,
+      ],
+    });
+
+    return {
+      type: "success",
+      folderPath: operation.folderPath,
+      renamed: operation.source,
+      target: operation.target,
+      message: `Renamed ${operation.source} to ${operation.target}`,
+    };
+  } catch (error) {
+    if (completedRename) {
+      try {
+        renameSync(completedRename.target, completedRename.source);
+      } catch {
+        // Best-effort rollback for partial failures.
+      }
+    }
+    if (operationId) cleanupJournalOperation(operationId);
+
+    return {
+      type: "error",
+      message: formatFinderError(error),
+    };
+  }
+}

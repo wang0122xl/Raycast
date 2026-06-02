@@ -1,6 +1,6 @@
 import { readdirSync, statSync } from "fs";
 import { join, relative } from "path";
-import { formatFinderError, getFrontFinderFolderPath } from "../finder";
+import { formatFinderError, getScopedFinderFolderPath } from "../finder";
 import { ensureDirectory, truncateText } from "../path-utils";
 
 type Input = {
@@ -13,6 +13,20 @@ interface FileEntry {
   path: string;
   type: "directory" | "file";
   size?: number;
+}
+
+function buildExtensionCounts(entries: FileEntry[]) {
+  const counts: Record<string, number> = {};
+
+  for (const entry of entries) {
+    if (entry.type !== "file") continue;
+
+    const match = entry.path.match(/\.([^.\\/]+)$/);
+    const extension = match ? match[1].toLowerCase() : "(no extension)";
+    counts[extension] = (counts[extension] ?? 0) + 1;
+  }
+
+  return counts;
 }
 
 function wildcardToRegExp(pattern: string): RegExp {
@@ -67,7 +81,7 @@ function listEntries(
 
 export default async function ListFolderFiles(input: Input) {
   try {
-    const folderPath = await getFrontFinderFolderPath();
+    const folderPath = await getScopedFinderFolderPath();
     ensureDirectory(folderPath);
 
     const maxDepth = Math.min(Math.max(input.maxDepth ?? 2, 0), 5);
@@ -82,6 +96,7 @@ export default async function ListFolderFiles(input: Input) {
       type: "success",
       folderPath,
       count: entries.length,
+      extensionCounts: buildExtensionCounts(entries),
       entries,
       message: truncateText(
         entries.length > 0
