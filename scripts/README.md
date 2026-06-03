@@ -35,10 +35,24 @@ Behavior:
 - Notification includes a clickable link to the newly created PR
 - Shares the same history file with `git-push.sh`
 
+### curl-convert.sh
+
+Runs a clipboard `curl` command as `curlie` and displays the command output in Raycast.
+
+Behavior:
+- Reads the curl command from the clipboard
+- Replaces only the leading `curl` command word with `curlie --pretty`
+- Adds an explicit `GET` when the curl command has no method or body, preventing `curlie` from treating stdin as a POST body
+- Prints the actual `curlie` command before the response output
+- Executes the converted command in a zsh shell
+- Shows stdout and stderr in Raycast full output mode
+- Rejects input that does not start with `curl`
+
 ## Requirements
 
 - `claude` CLI in PATH (`~/.local/bin/claude`)
 - `git` in PATH
-- `terminal-notifier` for macOS notifications
+- `curlie` in PATH
+- `terminal-notifier` for `git-push.sh` and `create-pr.sh` macOS notifications
 - Optional: `zoxide` for fuzzy directory resolution
 - Optional: `gh` CLI (used by Claude internally for PR creation)
