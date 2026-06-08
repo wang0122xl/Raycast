@@ -53,6 +53,15 @@ export function skillPathToName(path: string): string {
   return base.replace(/\.md$/i, "");
 }
 
+function skillFileToSlashCommandName(path: string): string {
+  const parts = path.split("/").filter(Boolean);
+  const fileName = parts[parts.length - 1] || "";
+  const baseName = fileName.replace(/\.md$/i, "");
+  return baseName.toLowerCase() === "skill"
+    ? parts[parts.length - 2] || baseName
+    : baseName;
+}
+
 export async function getSkillOptionsForCommand(command: TaskCommand): Promise<{
   skillPath?: string;
   skillName?: string;
@@ -109,7 +118,7 @@ function getSkillFile(options: TaskOptions): string {
 
 function buildTaskPrompt(command: TaskCommand, options: TaskOptions): string {
   if (command === "git-push") {
-    return "Execute the task described in the appended system prompt";
+    return "Commit the current repository changes using the selected skill workflow, then push the committed change and report the resulting Git URL.";
   }
   if (command === "create-pr") {
     const branch = requireTargetBranch(options);
@@ -136,48 +145,44 @@ function buildTaskPromptWithSkill(
   ].join("\n");
 }
 
+function buildClaudePrompt(
+  command: TaskCommand,
+  options: TaskOptions,
+  skillFile: string,
+): string {
+  const slashCommand = skillFileToSlashCommandName(skillFile);
+  if (!slashCommand) return buildTaskPrompt(command, options);
+
+  if (command === "git-push") {
+    return `/${slashCommand}\n\n${buildTaskPrompt(command, options)}`;
+  }
+  if (command === "create-pr") {
+    return `/${slashCommand} ${requireTargetBranch(options)}`;
+  }
+  const prUrl = options.prUrl || "";
+  return prUrl ? `/${slashCommand} ${prUrl}` : `/${slashCommand}`;
+}
+
 function buildClaudeCommand(
   command: TaskCommand,
   options: TaskOptions,
   model: string,
   skillFile: string,
 ): string {
-  const prompt = buildTaskPrompt(command, options);
-
-  const allowedTools = [
-    "Bash(git:*)",
-    "Bash(gh:*)",
-    "Bash(ls:*)",
-    "Bash(cat:*)",
-    "Bash(find:*)",
-    "Bash(grep:*)",
-    "Bash(mkdir:*)",
-    "Bash(cp:*)",
-    "Bash(wc:*)",
-    "Read",
-    "Write",
-    "Edit",
-    "Grep",
-    "Glob",
-  ].join(",");
+  const prompt = buildClaudePrompt(command, options, skillFile);
 
   const parts = [
     "claude",
     "-p",
-    "--allowedTools",
-    shellQuote(allowedTools),
     "--verbose",
     "--model",
     shellQuote(model),
+    "--dangerously-skip-permissions",
     "--output-format",
     "stream-json",
     "--include-partial-messages",
     "--include-hook-events",
   ];
-
-  if (skillFile) {
-    parts.push("--append-system-prompt-file", shellQuote(skillFile));
-  }
 
   parts.push("--", shellQuote(prompt));
 
