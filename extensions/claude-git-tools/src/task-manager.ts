@@ -39,7 +39,7 @@ const FORMATTER_FILE = join(TASK_DIR, "format-agent-output.js");
 const STALE_TASK_MAX_AGE_MS = 10 * 60 * 1000;
 const TASK_OUTPUT_PREVIEW_BYTES = 128 * 1024;
 const THINK_LEVEL = "high";
-const OPENCODE_HOOK_GRACE_SECONDS = 5;
+const OPENCODE_HOOK_GRACE_SECONDS = 3;
 
 let formatterWritten = false;
 
