@@ -1,10 +1,12 @@
 import {
   Action,
   ActionPanel,
+  Form,
   Icon,
   List,
   showToast,
   Toast,
+  useNavigation,
 } from "@raycast/api";
 import { useState, useEffect, useCallback } from "react";
 import {
@@ -12,17 +14,21 @@ import {
   DEFAULT_GEMINI_MODEL,
   DEFAULT_MODEL,
   DEFAULT_MODEL_COMMAND,
+  DEFAULT_OPENCODE_MODEL,
   getClaudeModelForCommand,
   getCodexModelForCommand,
   getGeminiModelForCommand,
   getModelCommand,
+  getOpenCodeModelForCommand,
   setClaudeModelForCommand,
   setCodexModelForCommand,
   setGeminiModelForCommand,
   setModelCommand,
+  setOpenCodeModelForCommand,
   type ClaudeModel,
   type CodexModel,
   type GeminiModel,
+  type OpenCodeModel,
   type SkillCommand,
 } from "./storage";
 
@@ -100,6 +106,61 @@ const GEMINI_MODELS: {
   },
 ];
 
+interface OpenCodeModelFormProps {
+  commandTitle: string;
+  currentModel: OpenCodeModel;
+  onSubmit: (model: OpenCodeModel) => Promise<void>;
+}
+
+interface OpenCodeModelFormValues {
+  model: string;
+}
+
+function OpenCodeModelForm({
+  commandTitle,
+  currentModel,
+  onSubmit,
+}: OpenCodeModelFormProps) {
+  const { pop } = useNavigation();
+
+  async function handleSubmit(values: OpenCodeModelFormValues) {
+    const model = values.model.trim();
+    if (!model) {
+      await showToast({
+        style: Toast.Style.Failure,
+        title: "Model Required",
+        message: "Enter an OpenCode model such as provider/model",
+      });
+      return;
+    }
+
+    await onSubmit(model);
+    pop();
+  }
+
+  return (
+    <Form
+      navigationTitle={`OpenCode Model: ${commandTitle}`}
+      actions={
+        <ActionPanel>
+          <Action.SubmitForm
+            title="Save Model"
+            icon={Icon.Check}
+            onSubmit={handleSubmit}
+          />
+        </ActionPanel>
+      }
+    >
+      <Form.TextField
+        id="model"
+        title="Model"
+        placeholder="provider/model"
+        defaultValue={currentModel}
+      />
+    </Form>
+  );
+}
+
 export default function ManageModel() {
   const [selectedCommand, setSelectedCommand] = useState<SkillCommand>(
     DEFAULT_MODEL_COMMAND,
@@ -110,18 +171,23 @@ export default function ManageModel() {
     useState<CodexModel>(DEFAULT_CODEX_MODEL);
   const [selectedGeminiModel, setSelectedGeminiModel] =
     useState<GeminiModel>(DEFAULT_GEMINI_MODEL);
+  const [selectedOpenCodeModel, setSelectedOpenCodeModel] =
+    useState<OpenCodeModel>(DEFAULT_OPENCODE_MODEL);
   const [isLoading, setIsLoading] = useState(true);
 
   const refresh = useCallback(
     async (command = selectedCommand) => {
-      const [claudeModel, codexModel, geminiModel] = await Promise.all([
-        getClaudeModelForCommand(command),
-        getCodexModelForCommand(command),
-        getGeminiModelForCommand(command),
-      ]);
+      const [claudeModel, codexModel, geminiModel, openCodeModel] =
+        await Promise.all([
+          getClaudeModelForCommand(command),
+          getCodexModelForCommand(command),
+          getGeminiModelForCommand(command),
+          getOpenCodeModelForCommand(command),
+        ]);
       setSelectedModel(claudeModel);
       setSelectedCodexModel(codexModel);
       setSelectedGeminiModel(geminiModel);
+      setSelectedOpenCodeModel(openCodeModel);
       setIsLoading(false);
     },
     [selectedCommand],
@@ -168,6 +234,16 @@ export default function ManageModel() {
     await showToast({
       style: Toast.Style.Success,
       title: "Gemini Model Updated",
+      message: `${COMMAND_TITLES[selectedCommand]} uses ${model}`,
+    });
+  }
+
+  async function handleSelectOpenCode(model: OpenCodeModel) {
+    await setOpenCodeModelForCommand(selectedCommand, model);
+    await refresh();
+    await showToast({
+      style: Toast.Style.Success,
+      title: "OpenCode Model Updated",
       message: `${COMMAND_TITLES[selectedCommand]} uses ${model}`,
     });
   }
@@ -275,6 +351,33 @@ export default function ManageModel() {
             }
           />
         ))}
+      </List.Section>
+      <List.Section
+        title={`Select OpenCode Model for ${COMMAND_TITLES[selectedCommand]}`}
+      >
+        <List.Item
+          icon={selectedOpenCodeModel ? Icon.CheckCircle : Icon.Circle}
+          title="OpenCode Model"
+          subtitle={
+            selectedOpenCodeModel || "Enter a model in provider/model format"
+          }
+          accessories={selectedOpenCodeModel ? [{ text: "Selected" }] : []}
+          actions={
+            <ActionPanel>
+              <Action.Push
+                title="Select Model"
+                icon={Icon.Pencil}
+                target={
+                  <OpenCodeModelForm
+                    commandTitle={COMMAND_TITLES[selectedCommand]}
+                    currentModel={selectedOpenCodeModel}
+                    onSubmit={handleSelectOpenCode}
+                  />
+                }
+              />
+            </ActionPanel>
+          }
+        />
       </List.Section>
     </List>
   );

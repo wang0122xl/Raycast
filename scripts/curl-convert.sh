@@ -39,8 +39,14 @@ if [[ ! "$INPUT" =~ (^|[[:space:]])(-X[^[:space:]]*|--request([=[:space:]]|$)|-d
 fi
 
 COMMAND="$(printf '%s' "$INPUT" | sed -E "1s/^([[:space:]]*)curl([[:space:]]|$)/\\1${REPLACEMENT}\\2/")"
-OUTPUT="$(/bin/zsh -lc "$COMMAND" 2>&1)"
-EXIT_CODE=$?
+if command -v script >/dev/null 2>&1; then
+  OUTPUT="$(script -q /dev/null /bin/zsh -lc "$COMMAND" 2>&1)"
+  EXIT_CODE=$?
+  OUTPUT="$(printf '%s' "$OUTPUT" | tr -d '\004\010\015' | sed '1s/^\^D//')"
+else
+  OUTPUT="$(/bin/zsh -lc "$COMMAND" 2>&1)"
+  EXIT_CODE=$?
+fi
 
 printf 'Command:\n%s\n\n---\n\n' "$COMMAND"
 printf '%s\n' "$OUTPUT"

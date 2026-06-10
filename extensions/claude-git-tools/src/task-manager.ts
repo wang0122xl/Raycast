@@ -20,12 +20,14 @@ import {
   getClaudeModelForCommand,
   getCodexModelForCommand,
   getGeminiModelForCommand,
+  getOpenCodeModelForCommand,
   getSkillPath,
   removeTask,
   updateTask,
   type Agent,
   type CodexModel,
   type GeminiModel,
+  type OpenCodeModel,
   type Task,
 } from "./storage";
 import { dirFromPath } from "./git-utils";
@@ -36,6 +38,8 @@ const TASK_DIR = join(tmpdir(), "claude-git-tools-tasks");
 const FORMATTER_FILE = join(TASK_DIR, "format-agent-output.js");
 const STALE_TASK_MAX_AGE_MS = 10 * 60 * 1000;
 const TASK_OUTPUT_PREVIEW_BYTES = 128 * 1024;
+const THINK_LEVEL = "high";
+const OPENCODE_HOOK_GRACE_SECONDS = 2;
 
 let formatterWritten = false;
 
@@ -177,6 +181,8 @@ function buildClaudeCommand(
     "--verbose",
     "--model",
     shellQuote(model),
+    "--effort",
+    THINK_LEVEL,
     "--dangerously-skip-permissions",
     "--output-format",
     "stream-json",
@@ -193,6 +199,8 @@ function buildCodexCommand(promptFile: string, model: CodexModel): string {
   return [
     "codex",
     "exec",
+    "-c",
+    shellQuote(`model_reasoning_effort="${THINK_LEVEL}"`),
     "--model",
     shellQuote(model),
     "--json",
@@ -205,20 +213,37 @@ function buildCodexCommand(promptFile: string, model: CodexModel): string {
   ].join(" ");
 }
 
-function buildOpenCodeCommand(promptFile: string): string {
-  return buildOpenCodeCommandWithPrompt(readFileSync(promptFile, "utf-8"));
+function buildOpenCodeCommand(
+  promptFile: string,
+  model: OpenCodeModel,
+): string {
+  return buildOpenCodeCommandWithPrompt(
+    readFileSync(promptFile, "utf-8"),
+    model,
+  );
 }
 
-function buildOpenCodeCommandWithPrompt(prompt: string): string {
-  return [
-    "opencode",
-    "run",
+function buildOpenCodeCommandWithPrompt(
+  prompt: string,
+  model: OpenCodeModel,
+): string {
+  const parts = ["opencode", "run"];
+
+  if (model) {
+    parts.push("--model", shellQuote(model));
+  }
+
+  parts.push("--variant", THINK_LEVEL);
+
+  parts.push(
     "--format",
     "json",
     "--dangerously-skip-permissions",
     "--",
     shellQuote(prompt),
-  ].join(" ");
+  );
+
+  return parts.join(" ");
 }
 
 function buildGeminiCommand(promptFile: string, model: GeminiModel): string {
@@ -1222,11 +1247,13 @@ export async function launchTask(
   const prompt = buildTaskPromptWithSkill(command, options, skillFile);
   writeFileSync(promptFile, prompt);
 
-  const [claudeModel, codexModel, geminiModel] = await Promise.all([
-    getClaudeModelForCommand(command),
-    getCodexModelForCommand(command),
-    getGeminiModelForCommand(command),
-  ]);
+  const [claudeModel, codexModel, geminiModel, openCodeModel] =
+    await Promise.all([
+      getClaudeModelForCommand(command),
+      getCodexModelForCommand(command),
+      getGeminiModelForCommand(command),
+      getOpenCodeModelForCommand(command),
+    ]);
   const agentModel =
     selectedAgent === "claude"
       ? claudeModel
@@ -1234,21 +1261,21 @@ export async function launchTask(
         ? codexModel
         : selectedAgent === "gemini"
           ? geminiModel
-          : "";
+          : openCodeModel;
   const agentCommand =
     selectedAgent === "claude"
       ? buildClaudeCommand(command, options, claudeModel, skillFile)
       : selectedAgent === "codex"
         ? buildCodexCommand(promptFile, codexModel)
         : selectedAgent === "opencode"
-          ? buildOpenCodeCommand(promptFile)
+          ? buildOpenCodeCommand(promptFile, openCodeModel)
           : buildGeminiCommand(promptFile, geminiModel);
   const promptPlaceholder = formatPromptPlaceholder(
     options.skillPath || skillFile,
   );
   const displayCommand =
     selectedAgent === "opencode"
-      ? buildOpenCodeCommandWithPrompt(promptPlaceholder)
+      ? buildOpenCodeCommandWithPrompt(promptPlaceholder, openCodeModel)
       : selectedAgent === "gemini"
         ? buildGeminiCommandWithPrompt(promptPlaceholder, geminiModel)
         : agentCommand;
@@ -1328,6 +1355,9 @@ extract_last_markdown_url() {
 
 ${agentCommand} 2>&1 | AGENT=${JSON.stringify(selectedAgent)} AGENT_MODEL=${JSON.stringify(agentModel)} node ${JSON.stringify(FORMATTER_FILE)} | tee -a ${JSON.stringify(outputFile)}
 EXIT_CODE=\${PIPESTATUS[0]}
+if [ "$TASK_AGENT" = "opencode" ]; then
+  sleep ${OPENCODE_HOOK_GRACE_SECONDS}
+fi
 cleanup_residual_processes
 
 if [ $EXIT_CODE -eq 0 ]; then

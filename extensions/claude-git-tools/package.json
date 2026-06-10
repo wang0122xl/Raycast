@@ -31,7 +31,7 @@
     {
       "name": "manage-model",
       "title": "Manage Models",
-      "description": "Select Claude, Codex, and Gemini models",
+      "description": "Select Claude, Codex, OpenCode, and Gemini models",
       "mode": "view"
     },
     {

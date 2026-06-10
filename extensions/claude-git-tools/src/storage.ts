@@ -26,6 +26,9 @@ export type GeminiModel =
   | "gemini-3.1-flash-lite-preview";
 export const DEFAULT_GEMINI_MODEL: GeminiModel = "gemini-3.1-pro-preview";
 
+export type OpenCodeModel = string;
+export const DEFAULT_OPENCODE_MODEL: OpenCodeModel = "";
+
 export type Agent = "claude" | "codex" | "opencode" | "gemini";
 export const DEFAULT_AGENT: Agent = "claude";
 
@@ -291,6 +294,25 @@ export async function setGeminiModelForCommand(
   model: GeminiModel,
 ): Promise<void> {
   await LocalStorage.setItem(commandModelKey(command, "gemini"), model);
+}
+
+export async function getOpenCodeModelForCommand(
+  command: SkillCommand,
+): Promise<OpenCodeModel> {
+  const raw = await LocalStorage.getItem<string>(
+    commandModelKey(command, "opencode"),
+  );
+  return raw?.trim() || DEFAULT_OPENCODE_MODEL;
+}
+
+export async function setOpenCodeModelForCommand(
+  command: SkillCommand,
+  model: OpenCodeModel,
+): Promise<void> {
+  await LocalStorage.setItem(
+    commandModelKey(command, "opencode"),
+    model.trim(),
+  );
 }
 
 export async function getAgent(): Promise<Agent> {
