@@ -39,7 +39,7 @@ const FORMATTER_FILE = join(TASK_DIR, "format-agent-output.js");
 const STALE_TASK_MAX_AGE_MS = 10 * 60 * 1000;
 const TASK_OUTPUT_PREVIEW_BYTES = 128 * 1024;
 const THINK_LEVEL = "high";
-const OPENCODE_HOOK_GRACE_SECONDS = 10;
+const OPENCODE_HOOK_GRACE_SECONDS = 5;
 
 let formatterWritten = false;
 
@@ -1439,10 +1439,6 @@ extract_last_markdown_url() {
 
 ${agentCommand} 2>&1 | AGENT=${JSON.stringify(selectedAgent)} AGENT_MODEL=${JSON.stringify(agentModel)} node ${JSON.stringify(FORMATTER_FILE)} | tee -a ${JSON.stringify(outputFile)}
 EXIT_CODE=\${PIPESTATUS[0]}
-if [ "$TASK_AGENT" = "opencode" ]; then
-  sleep ${OPENCODE_HOOK_GRACE_SECONDS}
-fi
-cleanup_residual_processes
 
 if [ $EXIT_CODE -eq 0 ]; then
   OPEN_URL=""
@@ -1593,6 +1589,10 @@ fi
 
 printf "%s\\n" "$EXIT_CODE" > ${JSON.stringify(exitCodeFile)}
 printf "" > "$PID_FILE"
+if [ "$TASK_AGENT" = "opencode" ]; then
+  sleep ${OPENCODE_HOOK_GRACE_SECONDS}
+fi
+cleanup_residual_processes
 
 exit $EXIT_CODE
 `.trim();
