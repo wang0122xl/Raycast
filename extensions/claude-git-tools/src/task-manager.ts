@@ -386,6 +386,7 @@ let attachmentBlock = null;
 let geminiPromptEcho = false;
 let geminiStackTrace = false;
 let geminiModelErrorShown = false;
+let openCodeSessionId = "";
 
 function asText(value) {
   if (typeof value === "string") return value;
@@ -762,6 +763,8 @@ function formatCodexItem(item, eventType) {
 }
 
 function formatOpenCode(event) {
+  rememberOpenCodeSession(event);
+
   const type = String(event.type || event.event || "").toLowerCase();
   const formatted = formatGenericAgent(event);
   if (formatted.trim()) return formatted;
@@ -774,6 +777,86 @@ function formatOpenCode(event) {
     return "";
   }
   return formatGenericAgent(event);
+}
+
+function rememberOpenCodeSession(event) {
+  if (!event || typeof event !== "object") return;
+
+  const properties = event.properties || event.data || {};
+  const info = properties.info || event.info || {};
+  const part = properties.part || event.part || event.item || {};
+  const candidates = [
+    event.sessionID,
+    event.sessionId,
+    event.session_id,
+    properties.sessionID,
+    properties.sessionId,
+    properties.session_id,
+    info.id,
+    part.sessionID,
+    part.sessionId,
+    part.session_id,
+  ];
+
+  const raw = candidates.find((value) => typeof value === "string" && value.trim());
+  if (!raw) return;
+
+  const sessionId = raw.trim();
+  openCodeSessionId = sessionId.startsWith("opencode-")
+    ? sessionId
+    : "opencode-" + sessionId;
+}
+
+function notifyOpenCodeStop() {
+  if (process.env.AGENT !== "opencode") return;
+
+  const net = require("net");
+  const os = require("os");
+  const socketPath = os.homedir() + "/.vibe-island/run/vibe-island.sock";
+  const env = {};
+  for (const key of [
+    "TERM_PROGRAM",
+    "ITERM_SESSION_ID",
+    "TERM_SESSION_ID",
+    "TMUX",
+    "TMUX_PANE",
+    "KITTY_WINDOW_ID",
+    "__CFBundleIdentifier",
+  ]) {
+    if (process.env[key]) env[key] = process.env[key];
+  }
+
+  const payload = {
+    session_id: openCodeSessionId || "opencode",
+    _source: "opencode",
+    _ppid: process.pid,
+    _env: env,
+    hook_event_name: "Stop",
+    cwd: process.cwd(),
+  };
+
+  const sock = new net.Socket();
+  let settled = false;
+  const settle = () => {
+    if (settled) return;
+    settled = true;
+    sock.destroy();
+  };
+
+  sock.on("error", settle);
+  sock.setTimeout(1000, settle);
+  sock.on("connect", () => {
+    try {
+      sock.end(JSON.stringify(payload), settle);
+    } catch {
+      settle();
+    }
+  });
+  try {
+    sock.connect({ path: socketPath });
+  } catch {
+    settle();
+  }
 }
 
 function formatGemini(event) {
@@ -936,6 +1019,7 @@ rl.on("line", (line) => {
   const formatted = formatLine(line);
   if (formatted) process.stdout.write(formatted);
 });
+rl.on("close", notifyOpenCodeStop);
 `;
 
 export function readTaskOutput(task: Task): string {
