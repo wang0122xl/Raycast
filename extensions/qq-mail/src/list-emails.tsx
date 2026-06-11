@@ -695,18 +695,33 @@ function ExpandedEmailView(props: ExpandedEmailViewProps) {
       actions={
         <ActionPanel>
           <ActionPanel.Section title="Email Actions">
-            <Action.OpenInBrowser title="Open QQ Mail" url={WEBMAIL_URL} shortcut={{ modifiers: ["cmd"], key: "o" }} />
+            <Action.OpenInBrowser
+              title="Open QQ Mail"
+              url={WEBMAIL_URL}
+              shortcut={{ modifiers: ["cmd"], key: "o" }}
+              onOpen={() => {
+                void closeMainWindow({ clearRootSearch: true, popToRootType: PopToRootType.Immediate });
+              }}
+            />
+            {onRefresh && (
+              <Action
+                title="Refresh Emails"
+                icon={Icon.ArrowClockwise}
+                onAction={onRefresh}
+                shortcut={{ modifiers: ["cmd"], key: "r" }}
+              />
+            )}
             <Action
               title="Reply"
               icon={Icon.Reply}
               onAction={() => openComposeForm("reply")}
-              shortcut={{ modifiers: ["cmd"], key: "r" }}
+              shortcut={{ modifiers: ["cmd", "shift"], key: "r" }}
             />
             <Action
               title="Reply All"
               icon={Icon.Reply}
               onAction={() => openComposeForm("replyAll")}
-              shortcut={{ modifiers: ["cmd", "shift"], key: "r" }}
+              shortcut={{ modifiers: ["cmd", "opt", "shift"], key: "r" }}
             />
             <Action
               title="Forward"
@@ -780,7 +795,7 @@ function ExpandedEmailView(props: ExpandedEmailViewProps) {
             <Action.CopyToClipboard
               title="Copy Subject"
               content={email.subject}
-              shortcut={{ modifiers: ["cmd"], key: "c" }}
+              shortcut={{ modifiers: ["cmd", "opt"], key: "c" }}
             />
             <Action.CopyToClipboard
               title="Copy Sender"
@@ -864,27 +879,26 @@ function EmailActions(props: EmailActionsProps) {
     );
   };
 
-  const handleMarkAsRead = async () => {
+  const handleMarkAsRead = async (): Promise<boolean> => {
     // Optimistic update: immediately reflect the change in UI
     onUpdateFlags(emailId, (flags) => (flags.includes("\\Seen") ? flags : [...flags, "\\Seen"]));
     try {
       await markAsRead(email.mailboxPath, email.uid);
       showToast({ style: Toast.Style.Success, title: "Marked as read" });
       onRefresh();
+      return true;
     } catch (error) {
       // Rollback on failure
       onUpdateFlags(emailId, (flags) => flags.filter((f) => f !== "\\Seen"));
       showToast({ style: Toast.Style.Failure, title: "Failed to mark as read", message: String(error) });
+      return false;
     }
   };
 
   const handleDefaultOpen = async () => {
-    if (!isUnread) {
+    if (await handleMarkAsRead()) {
       await closeMainWindow({ clearRootSearch: true, popToRootType: PopToRootType.Immediate });
-      return;
     }
-
-    await handleMarkAsRead();
   };
 
   const handleMarkAsUnread = async () => {
@@ -985,24 +999,46 @@ function EmailActions(props: EmailActionsProps) {
   return (
     <ActionPanel>
       <ActionPanel.Section title="Email Actions">
-        <Action.OpenInBrowser title="Open QQ Mail" url={WEBMAIL_URL} shortcut={{ modifiers: ["cmd"], key: "o" }} />
-        <Action
-          title={isUnread ? "Mark as Read" : "Close"}
-          icon={isUnread ? Icon.CheckCircle : Icon.XMarkCircle}
-          onAction={handleDefaultOpen}
-        />
+        {isUnread ? (
+          <Action title="Mark as Read" icon={Icon.CheckCircle} onAction={handleDefaultOpen} />
+        ) : (
+          <Action
+            title="Close"
+            icon={Icon.XMarkCircle}
+            onAction={() => closeMainWindow({ clearRootSearch: true, popToRootType: PopToRootType.Immediate })}
+          />
+        )}
         <Action
           title="Expand Email"
           icon={Icon.Maximize}
           onAction={handleExpandEmail}
           shortcut={{ modifiers: ["cmd"], key: "return" }}
         />
-        <Action title="Reply" icon={Icon.Reply} onAction={handleReply} shortcut={{ modifiers: ["cmd"], key: "r" }} />
+        <Action.OpenInBrowser
+          title="Open QQ Mail"
+          url={WEBMAIL_URL}
+          shortcut={{ modifiers: ["cmd"], key: "o" }}
+          onOpen={() => {
+            void closeMainWindow({ clearRootSearch: true, popToRootType: PopToRootType.Immediate });
+          }}
+        />
+        <Action
+          title="Refresh Emails"
+          icon={Icon.ArrowClockwise}
+          onAction={onRefresh}
+          shortcut={{ modifiers: ["cmd"], key: "r" }}
+        />
+        <Action
+          title="Reply"
+          icon={Icon.Reply}
+          onAction={handleReply}
+          shortcut={{ modifiers: ["cmd", "shift"], key: "r" }}
+        />
         <Action
           title="Reply All"
           icon={Icon.Reply}
           onAction={handleReplyAll}
-          shortcut={{ modifiers: ["cmd", "shift"], key: "r" }}
+          shortcut={{ modifiers: ["cmd", "opt", "shift"], key: "r" }}
         />
         <Action
           title="Forward"
@@ -1071,7 +1107,7 @@ function EmailActions(props: EmailActionsProps) {
         <Action.CopyToClipboard
           title="Copy Subject"
           content={email.subject}
-          shortcut={{ modifiers: ["cmd"], key: "c" }}
+          shortcut={{ modifiers: ["cmd", "opt"], key: "c" }}
         />
         <Action.CopyToClipboard
           title="Copy Sender Address"
