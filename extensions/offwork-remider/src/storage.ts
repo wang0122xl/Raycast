@@ -16,6 +16,7 @@ export interface WorkdayYearCache {
 
 const WORKDAY_CACHE_PREFIX = "workday-cache:";
 const LAST_NOTIFIED_DATE_KEY = "last-notified-date";
+const LAST_LUNCH_NOTIFIED_DATE_KEY = "last-lunch-notified-date";
 const LAST_ROOT_SEARCH_SUBTITLE_KEY = "last-root-search-subtitle";
 
 export async function getWorkdayYearCache(
@@ -48,6 +49,16 @@ export async function getLastNotifiedDate(): Promise<string | null> {
 
 export async function setLastNotifiedDate(dateKey: string): Promise<void> {
   await LocalStorage.setItem(LAST_NOTIFIED_DATE_KEY, dateKey);
+}
+
+export async function getLastLunchNotifiedDate(): Promise<string | null> {
+  return (
+    (await LocalStorage.getItem<string>(LAST_LUNCH_NOTIFIED_DATE_KEY)) ?? null
+  );
+}
+
+export async function setLastLunchNotifiedDate(dateKey: string): Promise<void> {
+  await LocalStorage.setItem(LAST_LUNCH_NOTIFIED_DATE_KEY, dateKey);
 }
 
 export async function getLastRootSearchSubtitle(): Promise<string | null> {

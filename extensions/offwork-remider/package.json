@@ -28,6 +28,36 @@
   "preferences": [
     {
       "type": "textfield",
+      "name": "workStartTime",
+      "title": "Work Start Time",
+      "label": "Work Start Time",
+      "description": "24-hour time in HH:mm format, for example 09:00.",
+      "placeholder": "09:00",
+      "default": "09:00",
+      "required": true
+    },
+    {
+      "type": "textfield",
+      "name": "lunchStartTime",
+      "title": "Lunch Start Time",
+      "label": "Lunch Start Time",
+      "description": "24-hour time in HH:mm format, for example 12:00.",
+      "placeholder": "12:00",
+      "default": "12:00",
+      "required": true
+    },
+    {
+      "type": "textfield",
+      "name": "lunchEndTime",
+      "title": "Lunch End Time",
+      "label": "Lunch End Time",
+      "description": "24-hour time in HH:mm format, for example 13:00.",
+      "placeholder": "13:00",
+      "default": "13:00",
+      "required": true
+    },
+    {
+      "type": "textfield",
       "name": "offworkTime",
       "title": "Offwork Time",
       "label": "Offwork Time",

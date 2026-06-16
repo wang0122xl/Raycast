@@ -5,6 +5,9 @@ export interface OffworkTime {
   minutesOfDay: number;
 }
 
+export const DEFAULT_WORK_START_TIME = "09:00";
+export const DEFAULT_LUNCH_START_TIME = "12:00";
+export const DEFAULT_LUNCH_END_TIME = "13:00";
 export const DEFAULT_OFFWORK_TIME = "18:00";
 
 const MINUTE_MS = 60_000;
@@ -18,7 +21,14 @@ export interface CountdownMinuteBoundaryTiming {
 export function parseOffworkTime(
   value: string | undefined,
 ): OffworkTime | null {
-  const normalized = value?.trim() || DEFAULT_OFFWORK_TIME;
+  return parseScheduleTime(value, DEFAULT_OFFWORK_TIME);
+}
+
+export function parseScheduleTime(
+  value: string | undefined,
+  defaultValue: string,
+): OffworkTime | null {
+  const normalized = value?.trim() || defaultValue;
   const match = OFFWORK_TIME_PATTERN.exec(normalized);
   if (!match) return null;
 
@@ -58,6 +68,10 @@ export function getCalendarDayDifference(from: Date, to: Date): number {
 }
 
 export function getOffworkDate(date: Date, offworkTime: OffworkTime): Date {
+  return getTimeDate(date, offworkTime);
+}
+
+export function getTimeDate(date: Date, offworkTime: OffworkTime): Date {
   const result = new Date(date);
   result.setHours(offworkTime.hours, offworkTime.minutes, 0, 0);
   return result;
@@ -67,7 +81,7 @@ export function getNextCountdownMinuteBoundaryTiming(
   now: Date,
   offworkTime: OffworkTime,
 ): CountdownMinuteBoundaryTiming | null {
-  const offworkAt = getOffworkDate(now, offworkTime);
+  const offworkAt = getTimeDate(now, offworkTime);
   const remainingMs = offworkAt.getTime() - now.getTime();
   if (remainingMs <= 0) return null;
 
@@ -85,7 +99,7 @@ export function getRemainingMinutes(
   now: Date,
   offworkTime: OffworkTime,
 ): number {
-  const offworkAt = getOffworkDate(now, offworkTime);
+  const offworkAt = getTimeDate(now, offworkTime);
   return Math.max(
     0,
     Math.ceil((offworkAt.getTime() - now.getTime()) / MINUTE_MS),
@@ -96,8 +110,12 @@ export function getMinutesPastOffwork(
   now: Date,
   offworkTime: OffworkTime,
 ): number {
-  const offworkAt = getOffworkDate(now, offworkTime);
+  const offworkAt = getTimeDate(now, offworkTime);
   return Math.floor((now.getTime() - offworkAt.getTime()) / MINUTE_MS);
+}
+
+export function getCurrentMinutesOfDay(date: Date): number {
+  return date.getHours() * 60 + date.getMinutes();
 }
 
 export function formatDuration(totalMinutes: number): string {

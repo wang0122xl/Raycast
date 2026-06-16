@@ -68,11 +68,18 @@ async function updateSubtitle(subtitle: string): Promise<void> {
 async function refreshAtNextCountdownMinuteBoundary(
   status: OffworkStatus,
 ): Promise<void> {
-  if (status.type !== "counting-down") return;
+  if (
+    status.type !== "counting-down" &&
+    status.type !== "lunch-counting-down"
+  ) {
+    return;
+  }
 
   const timing = getNextCountdownMinuteBoundaryTiming(
     new Date(),
-    status.offworkTime,
+    status.type === "lunch-counting-down"
+      ? status.lunchStartTime
+      : status.offworkTime,
   );
   if (!timing) return;
 

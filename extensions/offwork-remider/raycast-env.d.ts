@@ -8,6 +8,12 @@
 /* eslint-disable @typescript-eslint/ban-types */
 
 type ExtensionPreferences = {
+  /** Work Start Time - 24-hour time in HH:mm format, for example 09:00. */
+  "workStartTime": string,
+  /** Lunch Start Time - 24-hour time in HH:mm format, for example 12:00. */
+  "lunchStartTime": string,
+  /** Lunch End Time - 24-hour time in HH:mm format, for example 13:00. */
+  "lunchEndTime": string,
   /** Offwork Time - 24-hour time in HH:mm format, for example 18:30. */
   "offworkTime": string
 }

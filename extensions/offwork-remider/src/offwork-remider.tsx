@@ -103,6 +103,14 @@ function CountdownMetadata({
     <Detail.Metadata>
       <Detail.Metadata.Label title="Date" text={status.dateKey} />
       <Detail.Metadata.Label
+        title="Work Start Time"
+        text={status.workStartTime.label}
+      />
+      <Detail.Metadata.Label
+        title="Lunch Time"
+        text={`${status.lunchStartTime.label} - ${status.lunchEndTime.label}`}
+      />
+      <Detail.Metadata.Label
         title="Offwork Time"
         text={status.offworkTime.label}
       />
@@ -133,14 +141,36 @@ function buildMarkdown(
   }
 
   if (status.type === "invalid-preference") {
-    return ["# 下班时间配置无效", "", status.message].join("\n");
+    return ["# 时间配置无效", "", status.message].join("\n");
   }
 
   if (status.type === "non-workday") {
+    return ["# 🎉 节假日，enjoy！", "", "不会发送下班提醒。"].join("\n");
+  }
+
+  if (status.type === "before-work" || status.type === "offwork-reached") {
     return [
-      "# 今天不是工作日",
+      "# 🌿 非工作时间，wlb～",
       "",
-      "不会显示倒计时，也不会发送下班提醒。",
+      `上班时间：${status.workStartTime.label}`,
+      `下班时间：${status.offworkTime.label}`,
+    ].join("\n");
+  }
+
+  if (status.type === "lunch-time") {
+    return [
+      "# 🍱 lunch time，relax！",
+      "",
+      `午休时间：${status.lunchStartTime.label} - ${status.lunchEndTime.label}`,
+    ].join("\n");
+  }
+
+  if (status.type === "lunch-counting-down") {
+    return [
+      `# 距午休还剩 ${status.remainingText}`,
+      "",
+      `午休时间：${status.lunchStartTime.label} - ${status.lunchEndTime.label}`,
+      `下班时间：${status.offworkTime.label}`,
     ].join("\n");
   }
 

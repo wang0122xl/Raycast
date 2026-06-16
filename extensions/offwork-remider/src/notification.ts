@@ -20,6 +20,22 @@ export async function showOffworkNotification(
   }
 }
 
+export async function showLunchNotification(
+  lunchStartTime: string,
+): Promise<void> {
+  const title = "午休提醒";
+  const message = `现在是 ${lunchStartTime}，该午休了。`;
+
+  try {
+    await execFileAsync("osascript", [
+      "-e",
+      `display notification "${escapeAppleScriptString(message)}" with title "${escapeAppleScriptString(title)}"`,
+    ]);
+  } catch {
+    await showHUD(message);
+  }
+}
+
 function escapeAppleScriptString(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
