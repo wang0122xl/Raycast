@@ -308,7 +308,7 @@ export function RepoPicker({ primaryActionTitle, onSelect }: RepoPickerProps) {
                         <Action
                           title="View Git Diff"
                           icon={Icon.Code}
-                          shortcut={{ modifiers: ["cmd"], key: "enter" }}
+                          shortcut={{ modifiers: ["cmd", "shift"], key: "enter" }}
                           onAction={() => handleViewDiff(dir)}
                         />
                         <Action
@@ -362,7 +362,7 @@ export function RepoPicker({ primaryActionTitle, onSelect }: RepoPickerProps) {
                     <Action
                       title="View Git Diff"
                       icon={Icon.Code}
-                      shortcut={{ modifiers: ["cmd"], key: "enter" }}
+                      shortcut={{ modifiers: ["cmd", "shift"], key: "enter" }}
                       onAction={() => handleViewDiff(repo.fullPath)}
                     />
                     <Action
@@ -538,7 +538,7 @@ function RepoDiffPage({
             />
             <Action
               title={primaryActionTitle}
-              shortcut={{ modifiers: ["cmd"], key: "enter" }}
+              shortcut={{ modifiers: ["cmd", "shift"], key: "enter" }}
               onAction={() => void onContinue()}
             />
             <Action
@@ -575,7 +575,7 @@ function RepoDiffPage({
             <ActionPanel>
               <Action
                 title={primaryActionTitle}
-                shortcut={{ modifiers: ["cmd"], key: "enter" }}
+                shortcut={{ modifiers: ["cmd", "shift"], key: "enter" }}
                 onAction={() => void onContinue()}
               />
               <Action

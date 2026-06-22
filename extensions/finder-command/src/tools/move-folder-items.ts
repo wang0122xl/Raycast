@@ -8,18 +8,30 @@ import {
 } from "../operation-journal";
 import { showTaskFailure, showTaskSuccess } from "../toast-utils";
 import { resolveFileOperation } from "./file-operation-utils";
+import { formatOperationMessage } from "./operation-output";
 
 type Input = {
+  /** The contextToken returned by get-front-finder-folder for this request, when available. */
   contextToken?: string;
+  /** Root-level directory name under the locked Finder folder to limit filtered matching. */
   sourceDirectory?: string;
+  /** Newline-separated relative paths to move, when operating on specific files or folders. */
   paths?: string;
+  /** Destination directory relative to the locked Finder folder. */
   destinationDirectory?: string;
+  /** Optional new name when moving exactly one source item. */
   newName?: string;
+  /** Filename or wildcard pattern to match, for example "*.pdf" or "invoice". */
   pattern?: string;
+  /** File extension to match without a dot; for "PDF files", pass "pdf". */
   fileExtension?: string;
+  /** Multiple file extensions to match without dots, separated by commas or newlines. */
   fileExtensions?: string;
+  /** Maximum recursive depth. Omit this to scan all nested folders. */
   maxDepth?: number;
+  /** Whether to include hidden dotfiles and dotfolders. */
   includeHidden?: boolean;
+  /** Short reason for the file operation. */
   reason?: string;
 };
 
@@ -61,10 +73,22 @@ export default async function MoveFolderItems(input: Input) {
 
     return {
       type: "success",
+      operation: "move-folder-items",
       folderPath: operation.folderPath,
       moved: operation.sources,
       targets: operation.targets,
-      message: `Moved ${operation.sources.length} item(s):\n${operation.targets.join("\n")}`,
+      affectedPaths: operation.sources.map((source, index) => ({
+        path: source,
+        target: operation.targets[index],
+      })),
+      message: formatOperationMessage({
+        operation: "移动文件/目录 (move-folder-items)",
+        summary: `已移动 ${operation.sources.length} 项`,
+        affectedPaths: operation.sources.map((source, index) => ({
+          path: source,
+          target: operation.targets[index],
+        })),
+      }),
     };
   } catch (error) {
     for (const move of completedMoves.reverse()) {

@@ -14,17 +14,28 @@ import {
   resolveScopedDirectory,
 } from "../path-utils";
 import { showTaskFailure, showTaskSuccess } from "../toast-utils";
+import { formatOperationMessage } from "./operation-output";
 
 type Input = {
+  /** The contextToken returned by get-front-finder-folder for this request, when available. */
   contextToken?: string;
+  /** Root-level directory name under the locked Finder folder to limit filtered matching. */
   sourceDirectory?: string;
+  /** File extension to match without a dot; for "PDF files", pass "pdf". */
   fileExtension?: string;
+  /** Multiple file extensions to match without dots, separated by commas or newlines. */
   fileExtensions?: string;
+  /** Filename or wildcard pattern to match, for example "*.pdf" or "episode". */
   pattern?: string;
+  /** First number to use in the sequence. */
   startNumber?: number;
+  /** Minimum digit count for zero-padding. */
   padding?: number;
+  /** Maximum recursive depth. Omit this to scan all nested folders. */
   maxDepth?: number;
+  /** Whether to include hidden dotfiles and dotfolders. */
   includeHidden?: boolean;
+  /** Short reason for the rename operation. */
   reason?: string;
 };
 
@@ -228,17 +239,24 @@ export async function numberFolderFiles(
 
     return {
       type: "success",
+      operation: tool,
       folderPath,
       renamed: plan.map((item) => ({
         from: relative(folderPath, item.source),
         to: relative(folderPath, item.target),
       })),
-      message: `Renamed ${plan.length} file(s):\n${plan
-        .map(
-          (item) =>
-            `${relative(folderPath, item.source)} -> ${relative(folderPath, item.target)}`,
-        )
-        .join("\n")}`,
+      affectedPaths: plan.map((item) => ({
+        path: item.source,
+        target: item.target,
+      })),
+      message: formatOperationMessage({
+        operation: `批量编号重命名 (${tool})`,
+        summary: `已重命名 ${plan.length} 个文件`,
+        affectedPaths: plan.map((item) => ({
+          path: item.source,
+          target: item.target,
+        })),
+      }),
     };
   } catch (error) {
     for (const item of completedFinal.reverse()) {

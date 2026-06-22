@@ -7,12 +7,18 @@ import {
   truncateText,
 } from "../path-utils";
 import { showTaskFailure, showTaskSuccess } from "../toast-utils";
+import { formatOperationMessage } from "./operation-output";
 
 type Input = {
+  /** The contextToken returned by get-front-finder-folder for this request, when available. */
   contextToken?: string;
+  /** Root-level directory name under the locked Finder folder to limit the recursive scan. */
   sourceDirectory?: string;
+  /** Filename or wildcard pattern to match, for example "*.pdf" or "invoice". */
   pattern?: string;
+  /** Maximum recursive depth. Omit this to scan all nested folders. */
   maxDepth?: number;
+  /** Whether to include hidden dotfiles and dotfolders. */
   includeHidden?: boolean;
 };
 
@@ -122,21 +128,21 @@ export default async function ListFolderFiles(input: Input) {
 
     return {
       type: "success",
+      operation: "list-folder-files",
       folderPath,
       sourceDirectory,
       count: entries.length,
       extensionCounts: buildExtensionCounts(entries),
       entries,
+      affectedPaths: entries.map((entry) => ({ path: entry.path })),
       message: truncateText(
-        entries.length > 0
-          ? entries
-              .map((entry) =>
-                entry.type === "directory"
-                  ? `${entry.path}/`
-                  : `${entry.path} (${entry.size} bytes)`,
-              )
-              .join("\n")
-          : "No matching files found.",
+        formatOperationMessage({
+          operation: "列出文件/目录 (list-folder-files)",
+          summary: `匹配 ${entries.length} 项`,
+          affectedPaths: entries.map((entry) => ({
+            path: entry.type === "directory" ? `${entry.path}/` : entry.path,
+          })),
+        }),
       ),
     };
   } catch (error) {

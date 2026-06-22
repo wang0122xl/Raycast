@@ -29,7 +29,7 @@ import {
 } from "./time";
 
 const NOTIFICATION_WINDOW_MINUTES = 30;
-const HOLIDAY_HINT_MAX_DAYS = 30;
+const HOLIDAY_HINT_MAX_DAYS = 180;
 
 interface SchedulePreferences {
   workStartTime?: string;
@@ -91,27 +91,26 @@ export function getOffworkStatusMessage(status: OffworkStatus): string {
     return status.message;
   }
 
+  let message: string;
+
   if (status.type === "non-workday") {
-    return "🎉 节假日，enjoy！";
+    message = "🎉 节假日，enjoy！";
+  } else if (
+    status.type === "before-work" ||
+    status.type === "offwork-reached"
+  ) {
+    message = "🌿 非工作时间，wlb～";
+  } else if (status.type === "lunch-time") {
+    message = "🍱 lunch time，relax！";
+  } else if (status.type === "lunch-counting-down") {
+    message = `距午休还剩 ${status.remainingText}。`;
+  } else if (status.type === "counting-down") {
+    message = `距离下班还有 ${status.remainingText}。`;
+  } else {
+    message = "已到下班时间。";
   }
 
-  if (status.type === "before-work" || status.type === "offwork-reached") {
-    return "🌿 非工作时间，wlb～";
-  }
-
-  if (status.type === "lunch-time") {
-    return "🍱 lunch time，relax！";
-  }
-
-  if (status.type === "lunch-counting-down") {
-    return `距午休还剩 ${status.remainingText}。`;
-  }
-
-  if (status.type === "counting-down") {
-    return `距离下班还有 ${status.remainingText}。`;
-  }
-
-  return "已到下班时间。";
+  return appendHolidayHint(message, status.holidayCountdown);
 }
 
 export function getRootSearchSubtitle(status: OffworkStatus): string {
@@ -211,13 +210,6 @@ export async function getOffworkStatus(
 
   const currentMinutesOfDay = getCurrentMinutesOfDay(now);
 
-  if (currentMinutesOfDay < workStartTime.minutesOfDay) {
-    return {
-      type: "before-work",
-      ...base,
-    };
-  }
-
   if (currentMinutesOfDay >= offworkTime.minutesOfDay) {
     return {
       type: "offwork-reached",
@@ -234,17 +226,6 @@ export async function getOffworkStatus(
       type: "lunch-time",
       ...base,
       minutesPastLunchStart: getMinutesPastOffwork(now, lunchStartTime),
-    };
-  }
-
-  if (currentMinutesOfDay < lunchStartTime.minutesOfDay) {
-    const remainingMinutes = getRemainingMinutes(now, lunchStartTime);
-
-    return {
-      type: "lunch-counting-down",
-      ...base,
-      remainingMinutes,
-      remainingText: formatDuration(remainingMinutes),
     };
   }
 
@@ -268,26 +249,47 @@ export async function maybeSendOffworkReminder(
   }
 
   if (currentStatus.type === "non-workday") {
-    return { notified: false, message: "今天不是工作日，不发送提醒。" };
+    return {
+      notified: false,
+      message: appendHolidayHint(
+        "今天不是工作日，不发送提醒。",
+        currentStatus.holidayCountdown,
+      ),
+    };
   }
 
   if (currentStatus.type === "lunch-time") {
     if (currentStatus.minutesPastLunchStart > NOTIFICATION_WINDOW_MINUTES) {
       return {
         notified: false,
-        message: "已超过午休提醒窗口，不发送过期提醒。",
+        message: appendHolidayHint(
+          "已超过午休提醒窗口，不发送过期提醒。",
+          currentStatus.holidayCountdown,
+        ),
       };
     }
 
     const lastLunchNotifiedDate = await getLastLunchNotifiedDate();
     if (lastLunchNotifiedDate === currentStatus.dateKey) {
-      return { notified: false, message: "今天已经发送过午休提醒。" };
+      return {
+        notified: false,
+        message: appendHolidayHint(
+          "今天已经发送过午休提醒。",
+          currentStatus.holidayCountdown,
+        ),
+      };
     }
 
     await showLunchNotification(currentStatus.lunchStartTime.label);
     await setLastLunchNotifiedDate(currentStatus.dateKey);
 
-    return { notified: true, message: "午休提醒已发送。" };
+    return {
+      notified: true,
+      message: appendHolidayHint(
+        "午休提醒已发送。",
+        currentStatus.holidayCountdown,
+      ),
+    };
   }
 
   if (
@@ -302,27 +304,45 @@ export async function maybeSendOffworkReminder(
   }
 
   if (currentStatus.minutesPastOffwork > NOTIFICATION_WINDOW_MINUTES) {
-    return { notified: false, message: "已超过下班提醒窗口，不发送过期提醒。" };
+    return {
+      notified: false,
+      message: appendHolidayHint(
+        "已超过下班提醒窗口，不发送过期提醒。",
+        currentStatus.holidayCountdown,
+      ),
+    };
   }
 
   const lastNotifiedDate = await getLastNotifiedDate();
   if (lastNotifiedDate === currentStatus.dateKey) {
-    return { notified: false, message: "今天已经发送过下班提醒。" };
+    return {
+      notified: false,
+      message: appendHolidayHint(
+        "今天已经发送过下班提醒。",
+        currentStatus.holidayCountdown,
+      ),
+    };
   }
 
   await showOffworkNotification(currentStatus.offworkTime.label);
   await setLastNotifiedDate(currentStatus.dateKey);
 
-  return { notified: true, message: "下班提醒已发送。" };
+  return {
+    notified: true,
+    message: appendHolidayHint(
+      "下班提醒已发送。",
+      currentStatus.holidayCountdown,
+    ),
+  };
 }
 
-function appendHolidayHint(
+export function appendHolidayHint(
   value: string,
   holidayCountdown: LegalHolidayCountdown | null,
 ): string {
   if (!holidayCountdown) return value;
 
-  return `${value}（${holidayCountdown.daysUntil}天后${holidayCountdown.name}）`;
+  return `${value}（距离${holidayCountdown.name}还有${holidayCountdown.daysUntil}天）`;
 }
 
 async function getHolidayCountdownSafely(

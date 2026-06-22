@@ -144,14 +144,14 @@ const SingleTodoItem = ({ item, idx, sectionKey }: { item: TodoItem; idx: number
               <Action
                 icon={{ source: Icon.Pin, tintColor: Color.Blue }}
                 onAction={() => unPin()}
-                shortcut={{ modifiers: ["cmd"], key: "enter" }}
+                shortcut={{ modifiers: ["cmd", "shift"], key: "p" }}
                 title="Unpin Todo"
               />
             ) : (
               <Action
                 icon={{ source: Icon.Pin, tintColor: Color.Blue }}
                 onAction={() => pin()}
-                shortcut={{ modifiers: ["cmd"], key: "enter" }}
+                shortcut={{ modifiers: ["cmd", "shift"], key: "p" }}
                 title="Pin Todo"
               />
             )}

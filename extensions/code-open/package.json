@@ -5,7 +5,9 @@
   "description": "Open saved project folders in Zed.",
   "icon": "command-icon.png",
   "author": "wang0122xl",
-  "categories": ["Developer Tools"],
+  "categories": [
+    "Developer Tools"
+  ],
   "license": "MIT",
   "commands": [
     {
@@ -16,7 +18,7 @@
     }
   ],
   "dependencies": {
-    "@raycast/api": "^1.104.0"
+    "@raycast/api": "^1.104.19"
   },
   "devDependencies": {
     "@raycast/eslint-config": "^1.0.11",

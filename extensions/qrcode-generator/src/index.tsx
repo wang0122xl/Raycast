@@ -98,7 +98,7 @@ export default function Command() {
     const copyAndShowAction = (
       <Action.SubmitForm
         title="Copy QR Code and Show"
-        shortcut={{ modifiers: ["cmd"], key: "enter" }}
+        shortcut={{ modifiers: ["cmd", "shift"], key: "enter" }}
         onSubmit={async (values) => {
           await handleSubmit({ ...values, inline: true, copy: true } as FormValues);
         }}

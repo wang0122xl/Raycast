@@ -15,16 +15,26 @@ import {
   resolveFolderPath,
 } from "../path-utils";
 import { showTaskFailure, showTaskSuccess } from "../toast-utils";
+import { formatOperationMessage } from "./operation-output";
 
 type Input = {
+  /** The contextToken returned by get-front-finder-folder for this request, when available. */
   contextToken?: string;
+  /** Root-level directory name under the locked Finder folder to limit filtered matching. */
   sourceDirectory?: string;
+  /** Newline-separated relative paths to move to Trash, when operating on specific files. */
   paths?: string;
+  /** Filename or wildcard pattern to match, for example "*.pdf" or "invoice". */
   pattern?: string;
+  /** File extension to match without a dot; for "PDF files", pass "pdf". */
   fileExtension?: string;
+  /** Multiple file extensions to match without dots, separated by commas or newlines. */
   fileExtensions?: string;
+  /** Maximum recursive depth. Omit this to scan all nested folders. */
   maxDepth?: number;
+  /** Whether to include hidden dotfiles and dotfolders. */
   includeHidden?: boolean;
+  /** Short reason for the trash operation. */
   reason?: string;
 };
 
@@ -184,9 +194,15 @@ export default async function TrashFolderItems(input: Input) {
 
     return {
       type: "success",
+      operation: "trash-folder-items",
       folderPath,
       trashed: resolvedPaths,
-      message: `Moved ${resolvedPaths.length} item(s) to Trash:\n${resolvedPaths.join("\n")}`,
+      affectedPaths: resolvedPaths.map((path) => ({ path })),
+      message: formatOperationMessage({
+        operation: "移入废纸篓 (trash-folder-items)",
+        summary: `已移入废纸篓 ${resolvedPaths.length} 项`,
+        affectedPaths: resolvedPaths.map((path) => ({ path })),
+      }),
     };
   } catch (error) {
     if (movedToTrash) {
@@ -213,6 +229,19 @@ export default async function TrashFolderItems(input: Input) {
 
     return {
       type: "error",
+      code:
+        message ===
+        "No paths or filters were provided. Pass paths, fileExtension, fileExtensions, or pattern."
+          ? "MISSING_PATHS_OR_FILTERS"
+          : undefined,
+      retryWith:
+        message ===
+        "No paths or filters were provided. Pass paths, fileExtension, fileExtensions, or pattern."
+          ? {
+              fileExtension:
+                'If the user requested a file type such as "PDF files", call this tool again with fileExtension set to that extension, for example "pdf".',
+            }
+          : undefined,
       message,
     };
   }

@@ -8,8 +8,10 @@ import {
 } from "../operation-journal";
 import { showTaskFailure, showTaskSuccess } from "../toast-utils";
 import { resolveRenameOperation } from "./file-operation-utils";
+import { formatOperationMessage } from "./operation-output";
 
 type Input = {
+  /** The contextToken returned by get-front-finder-folder for this request, when available. */
   contextToken?: string;
   path: string;
   newName: string;
@@ -49,10 +51,16 @@ export default async function RenameFolderItem(input: Input) {
 
     return {
       type: "success",
+      operation: "rename-folder-item",
       folderPath: operation.folderPath,
       renamed: operation.source,
       target: operation.target,
-      message: `Renamed ${operation.source} to ${operation.target}`,
+      affectedPaths: [{ path: operation.source, target: operation.target }],
+      message: formatOperationMessage({
+        operation: "重命名文件/目录 (rename-folder-item)",
+        summary: "已重命名 1 项",
+        affectedPaths: [{ path: operation.source, target: operation.target }],
+      }),
     };
   } catch (error) {
     if (completedRename) {

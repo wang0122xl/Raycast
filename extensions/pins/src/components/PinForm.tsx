@@ -28,6 +28,14 @@ import DeletePinAction from "./actions/DeletePinAction";
 import { PLApplicator } from "placeholders-toolkit";
 import PinsPlaceholders from "../lib/placeholders";
 
+type SimpleShortcut = { modifiers: Keyboard.KeyModifier[]; key: Keyboard.KeyEquivalent };
+
+function getShortcutForCurrentPlatform(shortcut?: Keyboard.Shortcut | null): SimpleShortcut | undefined {
+  if (!shortcut) return undefined;
+  if ("modifiers" in shortcut) return shortcut;
+  return shortcut.macOS;
+}
+
 /**
  * Form for creating/editing a new pin.
  * @param props.pin The pin to edit.
@@ -141,23 +149,32 @@ export const PinForm = (props: { pin?: Pin; setPins?: React.Dispatch<React.SetSt
 
               if (values.modifiersField.length > 0) {
                 // Check if the shortcut is reserved by the extension
-                const reservedShortcut = Object.entries(KEYBOARD_SHORTCUT).find(
-                  ([, reservedShortcut]) =>
+                const reservedShortcut = Object.entries(KEYBOARD_SHORTCUT).find(([, reservedShortcut]) => {
+                  const resolvedShortcut = getShortcutForCurrentPlatform(reservedShortcut);
+                  return (
+                    resolvedShortcut != undefined &&
                     shortcut.modifiers.every((modifier: Keyboard.KeyModifier) =>
-                      reservedShortcut.modifiers.includes(modifier),
-                    ) && reservedShortcut.key == shortcut.key,
-                );
+                      resolvedShortcut.modifiers.includes(modifier),
+                    ) &&
+                    resolvedShortcut.key == shortcut.key
+                  );
+                });
                 if (reservedShortcut) {
                   setShortcutError(`This shortcut is reserved by the extension! (${reservedShortcut[0]})`);
                   return false;
                 }
 
                 // Check if the shortcut is already in use by another pin
-                const usedShortcut = pins?.find(
-                  (pin) =>
-                    pin.shortcut?.modifiers.every((modifier) => shortcut.modifiers.includes(modifier)) &&
-                    pin.shortcut?.key == shortcut.key,
-                );
+                const usedShortcut = pins?.find((candidate) => {
+                  const candidateShortcut = getShortcutForCurrentPlatform(candidate.shortcut);
+                  return (
+                    candidateShortcut != undefined &&
+                    candidateShortcut.modifiers.every((modifier: Keyboard.KeyModifier) =>
+                      shortcut.modifiers.includes(modifier),
+                    ) &&
+                    candidateShortcut.key == shortcut.key
+                  );
+                });
                 if (usedShortcut && (!pin || usedShortcut.id != pin.id)) {
                   setShortcutError(`This shortcut is already in use by another pin! (${usedShortcut.name})`);
                   return false;
@@ -545,7 +562,7 @@ export const PinForm = (props: { pin?: Pin; setPins?: React.Dispatch<React.SetSt
         id="modifiersField"
         title="Keyboard Shortcut Modifiers"
         info="The keyboard modifiers to use for the keyboard shortcut that opens the pin. The combination of modifiers and key must be unique."
-        defaultValue={pin ? pin.shortcut?.modifiers : undefined}
+        defaultValue={pin ? getShortcutForCurrentPlatform(pin.shortcut)?.modifiers : undefined}
         error={shortcutError}
         onChange={() => setShortcutError(undefined)}
       >
@@ -559,7 +576,7 @@ export const PinForm = (props: { pin?: Pin; setPins?: React.Dispatch<React.SetSt
         id="keyField"
         title="Keyboard Shortcut Key"
         info="The keyboard key to use for the keyboard shortcut that opens the pin. The combination of modifiers and key must be unique."
-        defaultValue={pin ? pin.shortcut?.key : undefined}
+        defaultValue={pin ? getShortcutForCurrentPlatform(pin.shortcut)?.key : undefined}
         error={shortcutError}
         onChange={() => setShortcutError(undefined)}
       />

@@ -54,12 +54,6 @@ export async function refreshFrontFinderFolderContext() {
 }
 
 export async function getScopedFinderFolderPath(contextToken?: string) {
-  if (!contextToken?.trim()) {
-    throw new Error(
-      "Missing contextToken. Call get-front-finder-folder at the start of this @finder-command request and pass its contextToken to subsequent tools.",
-    );
-  }
-
   const rawContext = await LocalStorage.getItem<string>(
     FINDER_FOLDER_CONTEXT_KEY,
   );
@@ -75,11 +69,15 @@ export async function getScopedFinderFolderPath(contextToken?: string) {
       );
     }
 
-    if (
+    const isFresh =
       context.folderPath &&
-      context.contextToken === contextToken &&
-      Date.now() - context.updatedAt <= FINDER_FOLDER_CONTEXT_MAX_AGE_MS
-    ) {
+      Date.now() - context.updatedAt <= FINDER_FOLDER_CONTEXT_MAX_AGE_MS;
+
+    if (isFresh && !contextToken?.trim()) {
+      return context.folderPath;
+    }
+
+    if (isFresh && context.contextToken === contextToken) {
       return context.folderPath;
     }
 

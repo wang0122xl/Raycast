@@ -10,7 +10,11 @@ import {
   Toast,
 } from "@raycast/api";
 import { useCallback, useEffect, useState } from "react";
-import { getOffworkStatus, type OffworkStatus } from "./offwork";
+import {
+  appendHolidayHint,
+  getOffworkStatus,
+  type OffworkStatus,
+} from "./offwork";
 
 export default function Command() {
   const [status, setStatus] = useState<OffworkStatus | null>(null);
@@ -108,7 +112,10 @@ function CountdownMetadata({
       />
       <Detail.Metadata.Label
         title="Lunch Time"
-        text={`${status.lunchStartTime.label} - ${status.lunchEndTime.label}`}
+        text={appendHolidayHint(
+          `${status.lunchStartTime.label} - ${status.lunchEndTime.label}`,
+          status.holidayCountdown,
+        )}
       />
       <Detail.Metadata.Label
         title="Offwork Time"
@@ -145,12 +152,16 @@ function buildMarkdown(
   }
 
   if (status.type === "non-workday") {
-    return ["# 🎉 节假日，enjoy！", "", "不会发送下班提醒。"].join("\n");
+    return [
+      appendHolidayHint("# 🎉 节假日，enjoy！", status.holidayCountdown),
+      "",
+      "不会发送下班提醒。",
+    ].join("\n");
   }
 
-  if (status.type === "before-work" || status.type === "offwork-reached") {
+  if (status.type === "before-work") {
     return [
-      "# 🌿 非工作时间，wlb～",
+      appendHolidayHint("# 🌿 非工作时间，wlb～", status.holidayCountdown),
       "",
       `上班时间：${status.workStartTime.label}`,
       `下班时间：${status.offworkTime.label}`,
@@ -159,24 +170,36 @@ function buildMarkdown(
 
   if (status.type === "lunch-time") {
     return [
-      "# 🍱 lunch time，relax！",
+      appendHolidayHint("# 🍱 lunch time，relax！", status.holidayCountdown),
       "",
-      `午休时间：${status.lunchStartTime.label} - ${status.lunchEndTime.label}`,
+      appendHolidayHint(
+        `午休时间：${status.lunchStartTime.label} - ${status.lunchEndTime.label}`,
+        status.holidayCountdown,
+      ),
     ].join("\n");
   }
 
   if (status.type === "lunch-counting-down") {
     return [
-      `# 距午休还剩 ${status.remainingText}`,
+      appendHolidayHint(
+        `# 距午休还剩 ${status.remainingText}`,
+        status.holidayCountdown,
+      ),
       "",
-      `午休时间：${status.lunchStartTime.label} - ${status.lunchEndTime.label}`,
+      appendHolidayHint(
+        `午休时间：${status.lunchStartTime.label} - ${status.lunchEndTime.label}`,
+        status.holidayCountdown,
+      ),
       `下班时间：${status.offworkTime.label}`,
     ].join("\n");
   }
 
   if (status.type === "counting-down") {
     return [
-      `# 还有 ${status.remainingText} 到下班`,
+      appendHolidayHint(
+        `# 还有 ${status.remainingText} 到下班`,
+        status.holidayCountdown,
+      ),
       "",
       `下班时间：${status.offworkTime.label}`,
       "",
@@ -184,7 +207,9 @@ function buildMarkdown(
     ].join("\n");
   }
 
-  return ["# 已到下班时间", "", `下班时间：${status.offworkTime.label}`].join(
-    "\n",
-  );
+  return [
+    appendHolidayHint("# 已到下班时间", status.holidayCountdown),
+    "",
+    `下班时间：${status.offworkTime.label}`,
+  ].join("\n");
 }

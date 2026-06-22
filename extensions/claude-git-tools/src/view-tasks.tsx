@@ -261,7 +261,7 @@ export default function ViewTasks() {
                 <Action.CopyToClipboard
                   title="Copy Git Link"
                   content={gitUrl}
-                  shortcut={{ modifiers: ["cmd"], key: "enter" }}
+                  shortcut={{ modifiers: ["cmd"], key: "c" }}
                 />
                 <Action
                   title="Open Git Link"
@@ -282,7 +282,7 @@ export default function ViewTasks() {
                 <Action.CopyToClipboard
                   title="Copy Pr Link"
                   content={task.prUrl}
-                  shortcut={{ modifiers: ["cmd"], key: "enter" }}
+                  shortcut={{ modifiers: ["cmd"], key: "c" }}
                 />
                 <Action
                   title="Open Pr Link"

@@ -1012,7 +1012,7 @@ function EmailActions(props: EmailActionsProps) {
           title="Expand Email"
           icon={Icon.Maximize}
           onAction={handleExpandEmail}
-          shortcut={{ modifiers: ["cmd"], key: "return" }}
+          shortcut={{ modifiers: ["cmd", "shift"], key: "return" }}
         />
         <Action.OpenInBrowser
           title="Open 163 Mail"

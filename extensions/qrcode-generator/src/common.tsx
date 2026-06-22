@@ -86,7 +86,7 @@ export default function Common({ from }: { from: "clipboard" | "selection" }) {
         <Action
           title="Copy, Save, and Close"
           onAction={handleCopySaveAndClose}
-          shortcut={{ modifiers: ["cmd"], key: "enter" }}
+          shortcut={{ modifiers: ["cmd", "shift"], key: "enter" }}
         />
         <Action title="Save to Downloads" onAction={handleSave} shortcut={{ modifiers: ["cmd"], key: "s" }} />
       </ActionPanel>

@@ -510,7 +510,7 @@ function PRPicker({
         <Action.CopyToClipboard
           title="Copy Pr Link"
           content={pr.url}
-          shortcut={{ modifiers: ["cmd"], key: "enter" }}
+          shortcut={{ modifiers: ["cmd"], key: "c" }}
         />
         <Action
           title="Open in Browser"

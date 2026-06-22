@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as os from "os";
 import path from "path";
-import { Fragment, useEffect } from "react";
+import { Fragment, useEffect, type ReactNode } from "react";
 
 import {
   Clipboard,
@@ -115,7 +115,7 @@ export default function ShowPinsCommand() {
    * @param groups The list of all groups.
    * @returns A submenu containing the group's subsections and pins.
    */
-  const getSubsections = (group: Group, groups: Group[]): JSX.Element | null => {
+  const getSubsections = (group: Group, groups: Group[]): ReactNode => {
     const parent = groups.find((g) => g.id == group.parent);
     const allSubgroups = getSubgroups(group, groups, true);
     const children = groups.filter((g) => g.parent == group.id);

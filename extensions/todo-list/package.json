@@ -31,7 +31,7 @@
     "publish": "npx @raycast/api@latest publish"
   },
   "dependencies": {
-    "@raycast/api": "^1.103.0",
+    "@raycast/api": "^1.104.19",
     "@raycast/utils": "^2.2.1",
     "chrono-node": "^2.7.8",
     "dayjs": "^1.10.7",

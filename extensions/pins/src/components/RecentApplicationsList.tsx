@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Action, ActionPanel, environment, getPreferenceValues, Icon, List, MenuBarExtra, open } from "@raycast/api";
 
 import { getIcon } from "../lib/icons";
@@ -11,7 +12,7 @@ import OpenAllMenuItem from "./menu-items/OpenAllMenuItem";
  * @param props.pinActions The actions to display for each pin. Only used in list view.
  * @returns A list of menu items or list items.
  */
-export default function RecentApplicationsList(props: { pinActions?: JSX.Element }) {
+export default function RecentApplicationsList(props: { pinActions?: ReactNode }) {
   const { pinActions } = props;
   const { recentApplications, loadingRecentApplications } = useRecentApplications();
   const preferences = getPreferenceValues<ExtensionPreferences>();

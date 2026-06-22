@@ -4,10 +4,12 @@ import { promisify } from "util";
 import { formatFinderError, getScopedFinderFolderPath } from "../finder";
 import { ensureDirectory, truncateText } from "../path-utils";
 import { showTaskFailure, showTaskSuccess } from "../toast-utils";
+import { formatOperationMessage } from "./operation-output";
 
 const execFileAsync = promisify(execFile);
 
 type Input = {
+  /** The contextToken returned by get-front-finder-folder for this request, when available. */
   contextToken?: string;
   command: string;
   reason?: string;
@@ -68,13 +70,19 @@ export default async function RunFolderShellCommand(input: Input) {
 
     return {
       type: "success",
+      operation: "run-folder-shell-command",
       folderPath,
       command,
+      affectedPaths: [{ path: folderPath }],
       stdout: truncateText(stdout),
       stderr: truncateText(stderr),
       message: truncateText(
         [
-          `Command completed in ${folderPath}`,
+          formatOperationMessage({
+            operation: "执行只读 Shell 命令 (run-folder-shell-command)",
+            summary: `命令：${command}`,
+            affectedPaths: [{ path: folderPath }],
+          }),
           stdout ? `\nstdout:\n${stdout}` : "",
           stderr ? `\nstderr:\n${stderr}` : "",
         ].join("\n"),
