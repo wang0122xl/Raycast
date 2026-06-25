@@ -280,8 +280,8 @@ export async function maybeSendOffworkReminder(
       };
     }
 
-    await showLunchNotification(currentStatus.lunchStartTime.label);
     await setLastLunchNotifiedDate(currentStatus.dateKey);
+    await showLunchNotification(currentStatus.lunchStartTime.label);
 
     return {
       notified: true,
@@ -324,8 +324,8 @@ export async function maybeSendOffworkReminder(
     };
   }
 
-  await showOffworkNotification(currentStatus.offworkTime.label);
   await setLastNotifiedDate(currentStatus.dateKey);
+  await showOffworkNotification(currentStatus.offworkTime.label);
 
   return {
     notified: true,

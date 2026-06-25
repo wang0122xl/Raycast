@@ -25,11 +25,15 @@ redact_sensitive() {
 }
 
 soften_colors() {
-  perl -pe 's/\e\[31m/\e[38;5;196m/g; s/\e\[33m/\e[38;5;214m/g; s/\e\[34m/\e[38;5;27m/g; s/\e\[94m/\e[38;5;27m/g; s/\e\[36m/\e[38;5;31m/g; s/\e\[96m/\e[38;5;31m/g; s/\e\[37m/\e[38;5;15m/g'
+  LC_ALL=C LANG=C perl -pe 's/\e\[31m/\e[38;5;196m/g; s/\e\[33m/\e[38;5;214m/g; s/\e\[34m/\e[38;5;27m/g; s/\e\[94m/\e[38;5;27m/g; s/\e\[36m/\e[38;5;31m/g; s/\e\[96m/\e[38;5;31m/g; s/\e\[37m/\e[38;5;15m/g'
 }
 
 compact_indent() {
-  perl -pe 's/^( +)/" " x (length($1) >> 1)/e'
+  LC_ALL=C LANG=C perl -pe 's/^( +)/" " x (length($1) >> 1)/e'
+}
+
+clean_tty_output() {
+  LC_ALL=C LANG=C perl -pe 's/\^D\x08\x08//g; s/\r$//'
 }
 
 INPUT="$(pbpaste)"
@@ -61,7 +65,11 @@ printf '%b%s%b\n' "$TITLE_BLUE$BOLD" "Command" "$RESET"
 printf '%s\n\n' "$DISPLAY_COMMAND"
 printf '%s\n\n' "----------------------------------------"
 printf '%b%s%b\n' "$TITLE_BLUE$BOLD" "Response" "$RESET"
-OUTPUT="$(/bin/zsh -lc "$COMMAND" </dev/null 2>&1)"
+if command -v script >/dev/null 2>&1; then
+  OUTPUT="$(script -q /dev/null /bin/zsh -lc "$COMMAND" </dev/null 2>&1)"
+else
+  OUTPUT="$(/bin/zsh -lc "$COMMAND" </dev/null 2>&1)"
+fi
 EXIT_CODE=$?
-printf '%s\n' "$OUTPUT" | compact_indent | soften_colors
+printf '%s\n' "$OUTPUT" | clean_tty_output | compact_indent | soften_colors
 exit "$EXIT_CODE"
