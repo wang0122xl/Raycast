@@ -13,7 +13,9 @@ import { formatOperationMessage } from "./operation-output";
 type Input = {
   /** The contextToken returned by get-front-finder-folder for this request, when available. */
   contextToken?: string;
+  /** Relative or absolute path of the single file or folder to rename inside the locked Finder folder. */
   path: string;
+  /** New file or folder name only, not a path. Use this for 重命名/改名/命名为/rename requests. */
   newName: string;
   reason?: string;
 };

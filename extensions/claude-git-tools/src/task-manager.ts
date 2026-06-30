@@ -39,7 +39,6 @@ const FORMATTER_FILE = join(TASK_DIR, "format-agent-output.js");
 const STALE_TASK_MAX_AGE_MS = 10 * 60 * 1000;
 const TASK_OUTPUT_PREVIEW_BYTES = 128 * 1024;
 const THINK_LEVEL = "high";
-const OPENCODE_HOOK_GRACE_SECONDS = 7;
 
 let formatterWritten = false;
 
@@ -1589,9 +1588,6 @@ fi
 
 printf "%s\\n" "$EXIT_CODE" > ${JSON.stringify(exitCodeFile)}
 printf "" > "$PID_FILE"
-if [ "$TASK_AGENT" = "opencode" ]; then
-  sleep ${OPENCODE_HOOK_GRACE_SECONDS}
-fi
 cleanup_residual_processes
 
 exit $EXIT_CODE

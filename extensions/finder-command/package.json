@@ -42,7 +42,7 @@
     {
       "name": "rename-folder-item",
       "title": "Rename Finder Folder Item",
-      "description": "Rename one file or folder inside the locked Finder folder, without overwriting existing targets."
+      "description": "Rename one file or folder inside the locked Finder folder, without overwriting existing targets. Use this for single-item rename requests, including 重命名, 改名, 命名为, and rename."
     },
     {
       "name": "number-folder-files",
@@ -57,7 +57,7 @@
     {
       "name": "run-folder-shell-command",
       "title": "Run Folder Shell Command",
-      "description": "Run a read-only shell command in the locked Finder folder. File-changing shell commands are blocked because they cannot be safely undone."
+      "description": "Run a read-only shell command in the locked Finder folder. Never use this for rename, move, copy, delete, trash, numbering, chmod, mkdir, or other file-changing requests; use the dedicated file operation tools instead."
     },
     {
       "name": "undo-last-folder-operation",

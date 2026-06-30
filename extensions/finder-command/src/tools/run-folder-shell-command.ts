@@ -11,6 +11,7 @@ const execFileAsync = promisify(execFile);
 type Input = {
   /** The contextToken returned by get-front-finder-folder for this request, when available. */
   contextToken?: string;
+  /** Read-only shell command only. Do not use for rename, move, copy, trash, delete, numbering, chmod, mkdir, or other file side effects. */
   command: string;
   reason?: string;
   requiresAuthorization?: boolean;
