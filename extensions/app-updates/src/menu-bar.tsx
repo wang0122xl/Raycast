@@ -14,6 +14,7 @@ import { scanCaskUpdates } from "./utils/cask-scanner";
 import { scanMasUpdates } from "./utils/mas-scanner";
 import { getStoredUpdatesSync, storeUpdates } from "./utils/update-store";
 import { getToolStatus } from "./utils/tool-status";
+import { filterExcludedUpdates, getExcludedApps } from "./utils/excluded-app-store";
 import type { AppUpdate, ToolStatus, UpdateSource } from "./utils/types";
 
 const SOURCE_ICONS: Record<UpdateSource, Icon> = {
@@ -42,8 +43,9 @@ export default function Command() {
       allUpdates.push(...sparkleUpdates);
 
       allUpdates.sort((a, b) => a.name.localeCompare(b.name));
-      setUpdates(allUpdates);
-      await storeUpdates(allUpdates);
+      const visibleUpdates = filterExcludedUpdates(allUpdates, await getExcludedApps());
+      setUpdates(visibleUpdates);
+      await storeUpdates(visibleUpdates);
     } catch (error) {
       console.error("[MenuBar] Scan failed:", error);
     } finally {

@@ -1,9 +1,13 @@
 import { execFile } from "child_process";
+import { createWriteStream } from "fs";
 import { mkdir, mkdtemp, readdir, rm } from "fs/promises";
+import { get as httpGet } from "http";
+import { get as httpsGet } from "https";
 import { tmpdir } from "os";
 import { basename, extname, join } from "path";
 import { promisify } from "util";
 import type { Dirent } from "fs";
+import type { IncomingMessage } from "http";
 import type { AppUpdate } from "./types";
 
 const execFileAsync = promisify(execFile);
@@ -12,6 +16,16 @@ const DOWNLOAD_TIMEOUT_MS = 10 * 60 * 1000;
 const INSTALL_TIMEOUT_MS = 10 * 60 * 1000;
 const MAX_BUFFER = 1024 * 1024;
 const RELAUNCH_DELAY_MS = 1000;
+const MAX_DOWNLOAD_REDIRECTS = 5;
+
+export type SparkleInstallProgress = {
+  appName: string;
+  phase: string;
+  detail?: string;
+  percent?: number;
+};
+
+type SparkleInstallProgressCallback = (progress: SparkleInstallProgress) => void;
 
 function shellQuote(value: string) {
   return `'${value.replace(/'/g, "'\\''")}'`;
@@ -23,6 +37,20 @@ function appleScriptString(value: string) {
 
 function delay(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function formatBytes(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`;
+}
+
+function getContentLength(response: IncomingMessage): number | null {
+  const value = response.headers["content-length"];
+  if (Array.isArray(value)) return Number(value[0]) || null;
+  if (typeof value === "string") return Number(value) || null;
+  return null;
 }
 
 function getDownloadFilename(url: string) {
@@ -37,15 +65,80 @@ function getDownloadFilename(url: string) {
   return "sparkle-update";
 }
 
-async function downloadUpdate(url: string, destination: string) {
-  await execFileAsync(
-    "/usr/bin/curl",
-    ["--fail", "--location", "--silent", "--show-error", "--output", destination, url],
-    {
-      timeout: DOWNLOAD_TIMEOUT_MS,
-      maxBuffer: MAX_BUFFER,
-    },
-  );
+async function downloadUpdate(
+  url: string,
+  destination: string,
+  appName: string,
+  onProgress?: SparkleInstallProgressCallback,
+  redirectCount = 0,
+): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const client = url.startsWith("http:") ? httpGet : httpsGet;
+    const request = client(url, (response) => {
+      const statusCode = response.statusCode ?? 0;
+      const redirectLocation = response.headers.location;
+
+      if (statusCode >= 300 && statusCode < 400 && redirectLocation) {
+        response.resume();
+        if (redirectCount >= MAX_DOWNLOAD_REDIRECTS) {
+          reject(new Error("Too many download redirects"));
+          return;
+        }
+
+        downloadUpdate(new URL(redirectLocation, url).toString(), destination, appName, onProgress, redirectCount + 1)
+          .then(resolve)
+          .catch(reject);
+        return;
+      }
+
+      if (statusCode < 200 || statusCode >= 300) {
+        response.resume();
+        reject(new Error(`Download failed with HTTP ${statusCode}`));
+        return;
+      }
+
+      const totalBytes = getContentLength(response);
+      let downloadedBytes = 0;
+      const file = createWriteStream(destination);
+
+      response.on("data", (chunk: Buffer) => {
+        downloadedBytes += chunk.length;
+        onProgress?.({
+          appName,
+          phase: "Downloading update",
+          detail: totalBytes
+            ? `${formatBytes(downloadedBytes)} of ${formatBytes(totalBytes)}`
+            : `${formatBytes(downloadedBytes)} downloaded`,
+          percent: totalBytes ? Math.min((downloadedBytes / totalBytes) * 100, 100) : undefined,
+        });
+      });
+
+      response.pipe(file);
+      response.on("error", reject);
+      file.on("error", reject);
+      file.on("finish", () => {
+        file.close((error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+
+          onProgress?.({
+            appName,
+            phase: "Download complete",
+            detail: totalBytes ? formatBytes(totalBytes) : formatBytes(downloadedBytes),
+            percent: 100,
+          });
+          resolve();
+        });
+      });
+    });
+
+    request.setTimeout(DOWNLOAD_TIMEOUT_MS, () => {
+      request.destroy(new Error("Download timed out"));
+    });
+    request.on("error", reject);
+  });
 }
 
 async function runShell(script: string) {
@@ -241,7 +334,7 @@ async function installDownloadedUpdate(updatePath: string, update: AppUpdate, wo
   throw new Error(`Unsupported Sparkle update package: ${extension || "unknown file type"}`);
 }
 
-export async function installSparkleUpdate(update: AppUpdate) {
+export async function installSparkleUpdate(update: AppUpdate, onProgress?: SparkleInstallProgressCallback) {
   if (!update.downloadUrl) throw new Error("Sparkle update download URL is missing");
 
   const workDir = await mkdtemp(join(tmpdir(), "app-updates-"));
@@ -249,10 +342,18 @@ export async function installSparkleUpdate(update: AppUpdate) {
   const shouldRelaunch = await isAppRunning(update.bundleId);
 
   try {
-    await downloadUpdate(update.downloadUrl, downloadPath);
-    if (shouldRelaunch) await quitApp(update.bundleId);
+    onProgress?.({ appName: update.name, phase: "Preparing update" });
+    await downloadUpdate(update.downloadUrl, downloadPath, update.name, onProgress);
+    if (shouldRelaunch) {
+      onProgress?.({ appName: update.name, phase: "Quitting app" });
+      await quitApp(update.bundleId);
+    }
+    onProgress?.({ appName: update.name, phase: "Installing update" });
     await installDownloadedUpdate(downloadPath, update, workDir);
-    if (shouldRelaunch || update.appPath) await openApp(update);
+    if (shouldRelaunch || update.appPath) {
+      onProgress?.({ appName: update.name, phase: "Opening app" });
+      await openApp(update);
+    }
   } finally {
     await rm(workDir, { recursive: true, force: true });
   }

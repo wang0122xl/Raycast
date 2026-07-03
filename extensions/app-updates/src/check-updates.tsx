@@ -9,7 +9,16 @@ import { getBrewPath } from "./utils/brew-path";
 import { storeUpdates } from "./utils/update-store";
 import { getToolStatus } from "./utils/tool-status";
 import { installSparkleUpdate } from "./utils/sparkle-installer";
+import {
+  excludeApp,
+  filterExcludedUpdates,
+  getAppFilterKey,
+  getExcludedApps,
+  removeExcludedApp,
+  type ExcludedApp,
+} from "./utils/excluded-app-store";
 import type { AppUpdate, ToolStatus, UpdateSource } from "./utils/types";
+import type { SparkleInstallProgress } from "./utils/sparkle-installer";
 
 const execFileAsync = promisify(execFile);
 
@@ -18,6 +27,20 @@ const SOURCE_LABELS: Record<UpdateSource, { label: string; color: Color }> = {
   cask: { label: "Homebrew", color: Color.Orange },
   mas: { label: "App Store", color: Color.Blue },
 };
+
+function getProgressIcon(percent?: number) {
+  if (percent === undefined) return Icon.CircleProgress;
+  if (percent >= 100) return Icon.CircleProgress100;
+  if (percent >= 75) return Icon.CircleProgress75;
+  if (percent >= 50) return Icon.CircleProgress50;
+  if (percent >= 25) return Icon.CircleProgress25;
+  return Icon.CircleProgress;
+}
+
+function getProgressText(progress: SparkleInstallProgress) {
+  const percent = progress.percent === undefined ? "" : ` ${Math.round(progress.percent)}%`;
+  return `${progress.phase}${percent}`;
+}
 
 function getMasSearchUrl(name: string) {
   return `macappstore://search.itunes.apple.com/WebObjects/MZSearch.woa/wa/search?mt=12&term=${encodeURIComponent(name)}`;
@@ -33,6 +56,8 @@ async function refreshMenuBar() {
 
 export default function Command() {
   const [updates, setUpdates] = useState<AppUpdate[]>([]);
+  const [excludedApps, setExcludedApps] = useState<ExcludedApp[]>([]);
+  const [installProgress, setInstallProgress] = useState<SparkleInstallProgress | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [status, setStatus] = useState("Starting scan...");
   const [tools, setTools] = useState<ToolStatus>({ brew: true, mas: true });
@@ -59,16 +84,19 @@ export default function Command() {
         allUpdates.push(...sparkleUpdates);
 
         allUpdates.sort((a, b) => a.name.localeCompare(b.name));
-        setUpdates(allUpdates);
-        await storeUpdates(allUpdates);
+        const currentExcludedApps = await getExcludedApps();
+        const visibleUpdates = filterExcludedUpdates(allUpdates, currentExcludedApps);
+        setExcludedApps(currentExcludedApps);
+        setUpdates(visibleUpdates);
+        await storeUpdates(visibleUpdates);
         await refreshMenuBar();
 
-        if (allUpdates.length === 0) {
+        if (visibleUpdates.length === 0) {
           toast.style = Toast.Style.Success;
           toast.title = "All apps are up to date";
         } else {
           toast.style = Toast.Style.Success;
-          toast.title = `${allUpdates.length} update(s) available`;
+          toast.title = `${visibleUpdates.length} update(s) available`;
         }
       } catch (error) {
         console.error("Scan failed:", error);
@@ -86,6 +114,40 @@ export default function Command() {
     await refreshMenuBar();
   }
 
+  async function excludeUpdate(app: AppUpdate) {
+    const nextExcludedApps = await excludeApp(app);
+    setExcludedApps(nextExcludedApps);
+    await updateList(updates.filter((update) => getAppFilterKey(update) !== getAppFilterKey(app)));
+    await showToast({ style: Toast.Style.Success, title: `${app.name} excluded from updates` });
+  }
+
+  async function restoreExcludedApp(app: AppUpdate) {
+    const nextExcludedApps = await removeExcludedApp(app);
+    setExcludedApps(nextExcludedApps);
+
+    const restoredUpdates = updates.some((update) => getAppFilterKey(update) === getAppFilterKey(app))
+      ? updates
+      : [...updates, app].sort((a, b) => a.name.localeCompare(b.name));
+    await updateList(restoredUpdates);
+    await showToast({ style: Toast.Style.Success, title: `${app.name} removed from exclusions` });
+  }
+
+  async function openApp(app: AppUpdate) {
+    try {
+      if (app.appPath) {
+        await execFileAsync("open", [app.appPath]);
+      } else {
+        await execFileAsync("open", ["-a", app.name]);
+      }
+    } catch (err) {
+      await showToast({
+        style: Toast.Style.Failure,
+        title: `Failed to open ${app.name}`,
+        message: err instanceof Error ? err.message.split("\n")[0] : undefined,
+      });
+    }
+  }
+
   const grouped: Record<UpdateSource, AppUpdate[]> = {
     cask: updates.filter((u) => u.source === "cask"),
     sparkle: updates.filter((u) => u.source === "sparkle"),
@@ -96,10 +158,36 @@ export default function Command() {
     <List isLoading={isLoading} searchBarPlaceholder="Filter apps...">
       {isLoading ? (
         <List.EmptyView icon={Icon.MagnifyingGlass} title="Scanning..." description={status} />
-      ) : updates.length === 0 ? (
-        <List.EmptyView icon={Icon.CheckCircle} title="All Up to Date" description="No updates found." />
+      ) : updates.length === 0 && !installProgress ? (
+        <List.EmptyView
+          icon={Icon.CheckCircle}
+          title="All Up to Date"
+          description="No updates found."
+          actions={
+            <ActionPanel>
+              <Action.Push
+                title="Show Excluded Apps"
+                icon={Icon.List}
+                shortcut={{ modifiers: ["cmd", "shift"], key: "d" }}
+                target={
+                  <ExcludedAppsView excludedApps={excludedApps} onOpenApp={openApp} onRestoreApp={restoreExcludedApp} />
+                }
+              />
+            </ActionPanel>
+          }
+        />
       ) : (
         <>
+          {installProgress && (
+            <List.Section title="Sparkle Install Progress">
+              <List.Item
+                icon={getProgressIcon(installProgress.percent)}
+                title={installProgress.appName}
+                subtitle={getProgressText(installProgress)}
+                accessories={installProgress.detail ? [{ text: installProgress.detail }] : undefined}
+              />
+            </List.Section>
+          )}
           {(Object.entries(grouped) as [UpdateSource, AppUpdate[]][])
             .filter(([, items]) => items.length > 0)
             .map(([source, items]) => (
@@ -130,14 +218,22 @@ export default function Command() {
                                 title: `Installing ${app.name}...`,
                               });
                               try {
-                                await installSparkleUpdate(app);
+                                setInstallProgress({ appName: app.name, phase: "Preparing update" });
+                                await installSparkleUpdate(app, (progress) => {
+                                  setInstallProgress(progress);
+                                  toast.title = `${app.name}: ${getProgressText(progress)}`;
+                                  toast.message = progress.detail;
+                                });
                                 toast.style = Toast.Style.Success;
                                 toast.title = `${app.name} updated to ${app.latestVersion}`;
+                                toast.message = undefined;
+                                setInstallProgress(null);
                                 await updateList(updates.filter((u) => u !== app));
                               } catch (err) {
                                 toast.style = Toast.Style.Failure;
                                 toast.title = `Failed to install ${app.name}`;
                                 toast.message = err instanceof Error ? err.message.split("\n")[0] : undefined;
+                                setInstallProgress(null);
                               }
                             }}
                           />
@@ -177,6 +273,24 @@ export default function Command() {
                         )}
                         {app.appPath && <Action.Open title="Open App" target={app.appPath} />}
                         {app.downloadUrl && <Action.OpenInBrowser title="Download Update" url={app.downloadUrl} />}
+                        <Action
+                          title="Exclude App from Updates"
+                          icon={Icon.EyeDisabled}
+                          shortcut={{ modifiers: ["cmd"], key: "d" }}
+                          onAction={() => excludeUpdate(app)}
+                        />
+                        <Action.Push
+                          title="Show Excluded Apps"
+                          icon={Icon.List}
+                          shortcut={{ modifiers: ["cmd", "shift"], key: "d" }}
+                          target={
+                            <ExcludedAppsView
+                              excludedApps={excludedApps}
+                              onOpenApp={openApp}
+                              onRestoreApp={restoreExcludedApp}
+                            />
+                          }
+                        />
                         {app.source === "cask" && (
                           <Action.CopyToClipboard
                             title="Copy Brew Upgrade Command"
@@ -227,6 +341,54 @@ export default function Command() {
             </List.Section>
           )}
         </>
+      )}
+    </List>
+  );
+}
+
+function ExcludedAppsView({
+  excludedApps,
+  onOpenApp,
+  onRestoreApp,
+}: {
+  excludedApps: ExcludedApp[];
+  onOpenApp: (app: AppUpdate) => void;
+  onRestoreApp: (app: AppUpdate) => void;
+}) {
+  return (
+    <List searchBarPlaceholder="Filter excluded apps..." navigationTitle="Excluded Apps">
+      {excludedApps.length === 0 ? (
+        <List.EmptyView icon={Icon.Eye} title="No Excluded Apps" />
+      ) : (
+        <List.Section title="Excluded Apps" subtitle={`${excludedApps.length} app(s)`}>
+          {excludedApps.map((app) => (
+            <List.Item
+              key={app.filterKey}
+              icon={app.appPath ? { fileIcon: app.appPath } : Icon.AppWindow}
+              title={app.name}
+              subtitle={`${app.currentVersion} → ${app.latestVersion}`}
+              accessories={[
+                {
+                  tag: {
+                    value: SOURCE_LABELS[app.source].label,
+                    color: SOURCE_LABELS[app.source].color,
+                  },
+                },
+              ]}
+              actions={
+                <ActionPanel>
+                  <Action title="Open App" icon={Icon.AppWindow} onAction={() => onOpenApp(app)} />
+                  <Action
+                    title="Remove from Exclusions"
+                    icon={Icon.XMarkCircle}
+                    shortcut={{ modifiers: ["cmd"], key: "enter" }}
+                    onAction={() => onRestoreApp(app)}
+                  />
+                </ActionPanel>
+              }
+            />
+          ))}
+        </List.Section>
       )}
     </List>
   );
