@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { Icon, LaunchProps, List, LocalStorage, getPreferenceValues } from "@raycast/api";
-import { getRecentApplications, useLocalData } from "./lib/LocalData";
-import { Pin, getLastOpenedPin, getPinKeywords, openPin, sortPins, usePins } from "./lib/Pins";
+import { Clipboard, Icon, LaunchProps, List, LocalStorage, Toast, getPreferenceValues, showToast } from "@raycast/api";
+import { useLocalData } from "./lib/LocalData";
+import { Pin, getLastOpenedPin, getPinKeywords, sortPins, usePins } from "./lib/Pins";
 import { StorageKey, Visibility } from "./lib/constants";
 import { ExtensionPreferences, ViewPinsPreferences } from "./lib/preferences";
 import { closeRaycastToRoot, pluralize } from "./lib/utils";
@@ -86,14 +86,13 @@ export default function OpenPinCommand(props: LaunchProps<{ arguments: Arguments
     [searchedPins],
   );
 
-  const openAndCloseIfNeeded = async (pin: Pin) => {
-    await getRecentApplications();
-    const result = await openPin(pin, viewPreferences, localData as unknown as { [key: string]: unknown });
-    if (result.didOpen && !result.openedInTerminal) {
+  const copyAndClose = async (pin: Pin) => {
+    try {
+      await Clipboard.copy(pin.url);
       await closeRaycastToRoot();
-    } else {
-      await revalidatePins();
-      await revalidateGroups();
+    } catch (error) {
+      console.error(error);
+      await showToast({ title: "Failed to copy pin", style: Toast.Style.Failure });
     }
   };
 
@@ -104,18 +103,12 @@ export default function OpenPinCommand(props: LaunchProps<{ arguments: Arguments
   }, []);
 
   useEffect(() => {
-    if (
-      autoOpened ||
-      loadingPins ||
-      loadingLocalData ||
-      initialQuery.trim().length === 0 ||
-      visibleMatchingPins.length !== 1
-    ) {
+    if (autoOpened || loadingPins || loadingLocalData || visibleMatchingPins.length !== 1) {
       return;
     }
 
     setAutoOpened(true);
-    Promise.resolve(openAndCloseIfNeeded(visibleMatchingPins[0]));
+    void copyAndClose(visibleMatchingPins[0]);
   }, [autoOpened, initialQuery, loadingLocalData, loadingPins, visibleMatchingPins]);
 
   const maxTimesOpened = Math.max(...pins.map((pin) => pin.timesOpened || 0));
