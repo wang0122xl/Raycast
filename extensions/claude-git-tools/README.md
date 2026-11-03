@@ -47,7 +47,7 @@ Tasks run as detached background processes. The task detail panel streams real-t
 ### 4. View Tasks / Manage Model
 
 - **View Tasks** — list all running and completed tasks, click to view output and extracted URLs
-- **Manage Model** — switch between Haiku / Sonnet / Opus
+- **Manage Models** — configure models per command. Codex models and their supported reasoning efforts come from the installed Codex CLI (`app-server` / `model/list`). Each model's action menu lets you select its reasoning effort; **Select Model** uses the model's CLI default effort. Existing model selections are preserved, with `high` used until an effort is selected.
 
 ## Claude CLI Permissions
 
@@ -97,7 +97,7 @@ Supported platforms: GitHub, GitLab, Bitbucket. SSH remotes are auto-converted t
 
 ### Required Output: Review Report (review-pr only)
 
-For the Review PR command, the extension extracts a report preview from Claude's output using the `!--------!` delimiter. The skill must wrap the final review report between two `!--------!` markers. Content between the markers is displayed in the task detail panel as a formatted report preview.
+For the Review PR command, the extension extracts a report preview using two `!--------!` markers, each on its own line. Inline mentions of the marker in skill instructions or logs are ignored. The final report is concise: verdict, short summary, essential issues with file links, and necessary verification limitations. Reasoning, investigation steps, tool output, and detailed checklists stay out of the report. These output instructions apply to every supported agent.
 
 Without the delimiters, the review output still displays as raw streaming text, but the structured report preview will not be available.
 

@@ -10,6 +10,7 @@ const CODEX_MODEL_KEY = "selected-codex-model";
 const GEMINI_MODEL_KEY = "selected-gemini-model";
 const MODEL_COMMAND_KEY = "selected-model-command";
 const COMMAND_MODEL_PREFIX = "selected-model:";
+const CODEX_REASONING_EFFORT_PREFIX = "selected-codex-reasoning-effort:";
 const AGENT_KEY = "selected-agent";
 const COMMAND_AGENT_PREFIX = "selected-agent:";
 const SKILL_PREFIX = "skill-";
@@ -17,8 +18,9 @@ const SKILL_PREFIX = "skill-";
 export type ClaudeModel = "haiku" | "sonnet" | "opus";
 export const DEFAULT_MODEL: ClaudeModel = "sonnet";
 
-export type CodexModel = "gpt-5.5" | "gpt-5.4" | "gpt-5.3-codex";
+export type CodexModel = string;
 export const DEFAULT_CODEX_MODEL: CodexModel = "gpt-5.5";
+export const DEFAULT_CODEX_REASONING_EFFORT = "high";
 
 export type GeminiModel =
   | "gemini-3.1-pro-preview"
@@ -194,10 +196,7 @@ export async function setModel(model: ClaudeModel) {
 
 export async function getCodexModel(): Promise<CodexModel> {
   const raw = await LocalStorage.getItem<string>(CODEX_MODEL_KEY);
-  if (raw === "gpt-5.5" || raw === "gpt-5.4" || raw === "gpt-5.3-codex") {
-    return raw;
-  }
-  return DEFAULT_CODEX_MODEL;
+  return raw?.trim() || DEFAULT_CODEX_MODEL;
 }
 
 export async function setCodexModel(model: CodexModel) {
@@ -260,10 +259,7 @@ export async function getCodexModelForCommand(
   const raw = await LocalStorage.getItem<string>(
     commandModelKey(command, "codex"),
   );
-  if (raw === "gpt-5.5" || raw === "gpt-5.4" || raw === "gpt-5.3-codex") {
-    return raw;
-  }
-  return DEFAULT_CODEX_MODEL;
+  return raw?.trim() || DEFAULT_CODEX_MODEL;
 }
 
 export async function setCodexModelForCommand(
@@ -271,6 +267,22 @@ export async function setCodexModelForCommand(
   model: CodexModel,
 ): Promise<void> {
   await LocalStorage.setItem(commandModelKey(command, "codex"), model);
+}
+
+export async function getCodexReasoningEffortForCommand(
+  command: SkillCommand,
+): Promise<string> {
+  const raw = await LocalStorage.getItem<string>(
+    CODEX_REASONING_EFFORT_PREFIX + command,
+  );
+  return raw?.trim() || DEFAULT_CODEX_REASONING_EFFORT;
+}
+
+export async function setCodexReasoningEffortForCommand(
+  command: SkillCommand,
+  effort: string,
+): Promise<void> {
+  await LocalStorage.setItem(CODEX_REASONING_EFFORT_PREFIX + command, effort);
 }
 
 export async function getGeminiModelForCommand(

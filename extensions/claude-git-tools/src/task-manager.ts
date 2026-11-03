@@ -19,6 +19,7 @@ import {
   getAgentForCommand,
   getClaudeModelForCommand,
   getCodexModelForCommand,
+  getCodexReasoningEffortForCommand,
   getGeminiModelForCommand,
   getOpenCodeModelForCommand,
   getSkillPath,
@@ -39,6 +40,14 @@ const FORMATTER_FILE = join(TASK_DIR, "format-agent-output.js");
 const STALE_TASK_MAX_AGE_MS = 10 * 60 * 1000;
 const TASK_OUTPUT_PREVIEW_BYTES = 128 * 1024;
 const THINK_LEVEL = "high";
+const REVIEW_REPORT_INSTRUCTIONS = [
+  "Final response: override any detailed report template in the skill with a concise Chinese report.",
+  "Include only the verdict (无问题 / 有警告 / 需阻断), a 2-3 sentence summary, essential actionable issues, and one short verification/limitations line when needed.",
+  "Describe each issue in 1-2 sentences with its severity, clickable file/line link, and brief repair direction. Omit empty sections and keep the report around 500 Chinese characters, excluding links.",
+  "Do not include reasoning, investigation steps, tool output, code snippets, a file-by-file walkthrough, or a detailed risk checklist.",
+  "Wrap only the final report in exactly two !--------! markers on standalone lines. Do not use these markers in progress messages or wrap the report in a code fence.",
+  "Return the original PR URL after the report.",
+].join("\n");
 
 let formatterWritten = false;
 
@@ -128,7 +137,7 @@ function buildTaskPrompt(command: TaskCommand, options: TaskOptions): string {
     return `$ARGUMENTS=${branch}`;
   }
   const prUrl = options.prUrl || "";
-  return `$ARGUMENTS=${prUrl}`;
+  return `$ARGUMENTS=${prUrl}\n\n${REVIEW_REPORT_INSTRUCTIONS}`;
 }
 
 function buildTaskPromptWithSkill(
@@ -163,7 +172,8 @@ function buildClaudePrompt(
     return `/${slashCommand} ${requireTargetBranch(options)}`;
   }
   const prUrl = options.prUrl || "";
-  return prUrl ? `/${slashCommand} ${prUrl}` : `/${slashCommand}`;
+  const prompt = prUrl ? `/${slashCommand} ${prUrl}` : `/${slashCommand}`;
+  return `${prompt}\n\n${REVIEW_REPORT_INSTRUCTIONS}`;
 }
 
 function buildClaudeCommand(
@@ -194,12 +204,16 @@ function buildClaudeCommand(
   return parts.join(" ");
 }
 
-function buildCodexCommand(promptFile: string, model: CodexModel): string {
+function buildCodexCommand(
+  promptFile: string,
+  model: CodexModel,
+  reasoningEffort: string,
+): string {
   return [
     "codex",
     "exec",
     "-c",
-    shellQuote(`model_reasoning_effort="${THINK_LEVEL}"`),
+    shellQuote(`model_reasoning_effort=${JSON.stringify(reasoningEffort)}`),
     "--model",
     shellQuote(model),
     "--json",
@@ -216,32 +230,21 @@ function buildOpenCodeCommand(
   promptFile: string,
   model: OpenCodeModel,
 ): string {
-  return buildOpenCodeCommandWithPrompt(
-    readFileSync(promptFile, "utf-8"),
-    model,
-  );
-}
-
-function buildOpenCodeCommandWithPrompt(
-  prompt: string,
-  model: OpenCodeModel,
-): string {
-  const parts = ["opencode", "run"];
-
-  if (model) {
-    parts.push("--model", shellQuote(model));
-  }
-
-  parts.push("--variant", THINK_LEVEL);
-
-  parts.push(
+  const parts = [
+    "opencode",
+    "run",
+    "--standalone",
     "--format",
     "json",
-    "--dangerously-skip-permissions",
-    "--",
-    shellQuote(prompt),
-  );
+    "--auto",
+  ];
 
+  if (model) {
+    const modelRef = model.includes("#") ? model : `${model}#${THINK_LEVEL}`;
+    parts.push("--model", shellQuote(modelRef));
+  }
+
+  parts.push("<", shellQuote(promptFile));
   return parts.join(" ");
 }
 
@@ -417,6 +420,10 @@ function toolCommandFromInput(input) {
   return input.command || input.cmd || input.description || input.query || input.prompt || "";
 }
 
+function escapeToolReportMarkers(text) {
+  return String(text).replaceAll("!--------!", "[report delimiter in tool output]");
+}
+
 function formatToolUse(part) {
   const name = part.name || part.tool_name || part.tool || "tool";
   const command = toolCommandFromInput(
@@ -424,13 +431,13 @@ function formatToolUse(part) {
   );
   if (!command) return "";
 
-  return "\n▸ " + name + ": " + command + "\n";
+  return "\n▸ " + name + ": " + escapeToolReportMarkers(command) + "\n";
 }
 
 function formatToolResult(part) {
   const content = asText(part.content || part.result || part.output || part.state?.output || part);
   if (!content.trim()) return "";
-  return "\n" + content.trimEnd() + "\n";
+  return "\n" + escapeToolReportMarkers(content.trimEnd()) + "\n";
 }
 
 function buildClaudePartKey(part) {
@@ -484,11 +491,11 @@ function formatClaudeHook(event) {
   const output = asText(payload.output || payload.stdout || payload.stderr || payload.message || event.message);
 
   if (command) {
-    return "\n▸ " + hookName + ": " + command + "\n" + (output ? output.trimEnd() + "\n" : "");
+    return "\n▸ " + hookName + ": " + escapeToolReportMarkers(command) + "\n" + (output ? escapeToolReportMarkers(output.trimEnd()) + "\n" : "");
   }
 
   if (output.trim()) {
-    return "\n[" + hookName + "] " + output.trimEnd() + "\n";
+    return "\n[" + hookName + "] " + escapeToolReportMarkers(output.trimEnd()) + "\n";
   }
 
   return "";
@@ -699,7 +706,7 @@ function extractCodexUrls(text) {
 function isCodexSourceOutputCommand(command) {
   return (
     /\b(nl|cat)\b/.test(command) ||
-    /\bsed\b.*\b-n\b/.test(command) ||
+    /\bsed\b.*\s-n\b/.test(command) ||
     /\bgit\s+(diff|show)\b/.test(command) ||
     /\brg\b.*\b(-n|--line-number)\b/.test(command)
   );
@@ -717,7 +724,7 @@ function formatCodexCommandOutput(command, output) {
   }
 
   const filtered = stripCodexCodeSnippets(output);
-  return filtered.trim() ? filtered + "\n" : "";
+  return filtered.trim() ? escapeToolReportMarkers(filtered) + "\n" : "";
 }
 
 function formatCodexItem(item, eventType) {
@@ -726,7 +733,9 @@ function formatCodexItem(item, eventType) {
   if (item.type === "agent_message") {
     const text = asText(item.text || item.content || item.message);
     if (!text.trim() || isCodexNoise(text)) return "";
-    const filtered = stripCodexCodeSnippets(text);
+    const filtered = /^[ \t]*!--------![ \t]*\r?$/m.test(text)
+      ? text
+      : stripCodexCodeSnippets(text);
     return filtered.trim() ? filtered + "\n\n" : "";
   }
 
@@ -737,7 +746,7 @@ function formatCodexItem(item, eventType) {
     if (eventType === "item.started") {
       if (!command || codexCommandStarts.has(key)) return "";
       codexCommandStarts.add(key);
-      return "\n▸ shell: " + command + "\n";
+      return "\n▸ shell: " + escapeToolReportMarkers(command) + "\n";
     }
 
     const output = asText(item.aggregated_output || item.output || item.stdout || item.stderr);
@@ -764,16 +773,12 @@ function formatCodexItem(item, eventType) {
 function formatOpenCode(event) {
   rememberOpenCodeSession(event);
 
-  const type = String(event.type || event.event || "").toLowerCase();
-  const formatted = formatGenericAgent(event);
-  if (formatted.trim()) return formatted;
-
-  if (
-    type.includes("session") ||
-    type.includes("permission") ||
-    type.includes("storage")
-  ) {
-    return "";
+  const part = event.part;
+  if (event.type === "text" && typeof part?.text === "string") {
+    return part.text + "\n";
+  }
+  if (event.type === "tool_use" && part?.state?.status === "error") {
+    return formatToolUse(part) + "\n[error] " + escapeToolReportMarkers(part.state.error) + "\n";
   }
   return formatGenericAgent(event);
 }
@@ -1330,13 +1335,19 @@ export async function launchTask(
   const prompt = buildTaskPromptWithSkill(command, options, skillFile);
   writeFileSync(promptFile, prompt);
 
-  const [claudeModel, codexModel, geminiModel, openCodeModel] =
-    await Promise.all([
-      getClaudeModelForCommand(command),
-      getCodexModelForCommand(command),
-      getGeminiModelForCommand(command),
-      getOpenCodeModelForCommand(command),
-    ]);
+  const [
+    claudeModel,
+    codexModel,
+    geminiModel,
+    openCodeModel,
+    codexReasoningEffort,
+  ] = await Promise.all([
+    getClaudeModelForCommand(command),
+    getCodexModelForCommand(command),
+    getGeminiModelForCommand(command),
+    getOpenCodeModelForCommand(command),
+    getCodexReasoningEffortForCommand(command),
+  ]);
   const agentModel =
     selectedAgent === "claude"
       ? claudeModel
@@ -1349,19 +1360,17 @@ export async function launchTask(
     selectedAgent === "claude"
       ? buildClaudeCommand(command, options, claudeModel, skillFile)
       : selectedAgent === "codex"
-        ? buildCodexCommand(promptFile, codexModel)
+        ? buildCodexCommand(promptFile, codexModel, codexReasoningEffort)
         : selectedAgent === "opencode"
           ? buildOpenCodeCommand(promptFile, openCodeModel)
           : buildGeminiCommand(promptFile, geminiModel);
-  const promptPlaceholder = formatPromptPlaceholder(
-    options.skillPath || skillFile,
-  );
   const displayCommand =
-    selectedAgent === "opencode"
-      ? buildOpenCodeCommandWithPrompt(promptPlaceholder, openCodeModel)
-      : selectedAgent === "gemini"
-        ? buildGeminiCommandWithPrompt(promptPlaceholder, geminiModel)
-        : agentCommand;
+    selectedAgent === "gemini"
+      ? buildGeminiCommandWithPrompt(
+          formatPromptPlaceholder(options.skillPath || skillFile),
+          geminiModel,
+        )
+      : agentCommand;
   task.commandLine = formatCommandLineForDisplay(displayCommand);
   await updateTask(task.id, { commandLine: task.commandLine });
   const home = homedir();

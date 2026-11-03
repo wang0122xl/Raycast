@@ -154,26 +154,28 @@ export function extractReviewReports(
   baseCreatedAt = 0,
 ): ReviewReportEntry[] {
   const reports: ReviewReportEntry[] = [];
-  let searchStart = 0;
+  const delimiterPattern = new RegExp(
+    `^[\\t ]*${REVIEW_REPORT_DELIMITER}[\\t ]*\\r?$`,
+    "gm",
+  );
 
-  while (searchStart < output.length) {
-    const startIdx = output.indexOf(REVIEW_REPORT_DELIMITER, searchStart);
-    if (startIdx === -1) break;
+  while (delimiterPattern.lastIndex < output.length) {
+    const start = delimiterPattern.exec(output);
+    if (!start) break;
 
-    const contentStart = startIdx + REVIEW_REPORT_DELIMITER.length;
-    const endIdx = output.indexOf(REVIEW_REPORT_DELIMITER, contentStart);
-    if (endIdx === -1) break;
+    const end = delimiterPattern.exec(output);
+    if (!end) break;
 
-    const markdown = output.slice(contentStart, endIdx).trim();
+    const markdown = output
+      .slice(start.index + start[0].length, end.index)
+      .trim();
     if (markdown) {
       reports.push({
-        id: `${baseCreatedAt}:${startIdx}:${endIdx}`,
+        id: `${baseCreatedAt}:${start.index}:${end.index}`,
         markdown,
         createdAt: baseCreatedAt + reports.length,
       });
     }
-
-    searchStart = endIdx + REVIEW_REPORT_DELIMITER.length;
   }
 
   return reports.sort((a, b) => b.createdAt - a.createdAt);

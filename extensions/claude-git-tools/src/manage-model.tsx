@@ -9,19 +9,23 @@ import {
   useNavigation,
 } from "@raycast/api";
 import { useState, useEffect, useCallback } from "react";
+import { getCodexModels, type CodexModelInfo } from "./codex-models";
 import {
   DEFAULT_CODEX_MODEL,
+  DEFAULT_CODEX_REASONING_EFFORT,
   DEFAULT_GEMINI_MODEL,
   DEFAULT_MODEL,
   DEFAULT_MODEL_COMMAND,
   DEFAULT_OPENCODE_MODEL,
   getClaudeModelForCommand,
   getCodexModelForCommand,
+  getCodexReasoningEffortForCommand,
   getGeminiModelForCommand,
   getModelCommand,
   getOpenCodeModelForCommand,
   setClaudeModelForCommand,
   setCodexModelForCommand,
+  setCodexReasoningEffortForCommand,
   setGeminiModelForCommand,
   setModelCommand,
   setOpenCodeModelForCommand,
@@ -59,28 +63,6 @@ const MODELS: { value: ClaudeModel; title: string; description: string }[] = [
     value: "opus",
     title: "Opus",
     description: "Most capable model for complex tasks",
-  },
-];
-
-const CODEX_MODELS: {
-  value: CodexModel;
-  title: string;
-  description: string;
-}[] = [
-  {
-    value: "gpt-5.5",
-    title: "GPT-5.5 (Default)",
-    description: "Default model for Codex tasks",
-  },
-  {
-    value: "gpt-5.4",
-    title: "GPT-5.4",
-    description: "Alternative Codex model",
-  },
-  {
-    value: "gpt-5.3-codex",
-    title: "GPT-5.3 Codex",
-    description: "Codex-optimized GPT-5.3 model",
   },
 ];
 
@@ -129,7 +111,7 @@ function OpenCodeModelForm({
       await showToast({
         style: Toast.Style.Failure,
         title: "Model Required",
-        message: "Enter an OpenCode model such as provider/model",
+        message: "Enter provider/model or provider/model#variant",
       });
       return;
     }
@@ -154,7 +136,8 @@ function OpenCodeModelForm({
       <Form.TextField
         id="model"
         title="Model"
-        placeholder="provider/model"
+        placeholder="provider/model or provider/model#variant"
+        info="A model without a variant uses #high."
         defaultValue={currentModel}
       />
     </Form>
@@ -169,6 +152,11 @@ export default function ManageModel() {
     useState<ClaudeModel>(DEFAULT_MODEL);
   const [selectedCodexModel, setSelectedCodexModel] =
     useState<CodexModel>(DEFAULT_CODEX_MODEL);
+  const [selectedCodexReasoningEffort, setSelectedCodexReasoningEffort] =
+    useState(DEFAULT_CODEX_REASONING_EFFORT);
+  const [codexModels, setCodexModels] = useState<CodexModelInfo[]>([]);
+  const [isLoadingCodexModels, setIsLoadingCodexModels] = useState(true);
+  const [codexModelsError, setCodexModelsError] = useState<string>();
   const [selectedGeminiModel, setSelectedGeminiModel] =
     useState<GeminiModel>(DEFAULT_GEMINI_MODEL);
   const [selectedOpenCodeModel, setSelectedOpenCodeModel] =
@@ -177,21 +165,50 @@ export default function ManageModel() {
 
   const refresh = useCallback(
     async (command = selectedCommand) => {
-      const [claudeModel, codexModel, geminiModel, openCodeModel] =
-        await Promise.all([
-          getClaudeModelForCommand(command),
-          getCodexModelForCommand(command),
-          getGeminiModelForCommand(command),
-          getOpenCodeModelForCommand(command),
-        ]);
+      const [
+        claudeModel,
+        codexModel,
+        geminiModel,
+        openCodeModel,
+        codexReasoningEffort,
+      ] = await Promise.all([
+        getClaudeModelForCommand(command),
+        getCodexModelForCommand(command),
+        getGeminiModelForCommand(command),
+        getOpenCodeModelForCommand(command),
+        getCodexReasoningEffortForCommand(command),
+      ]);
       setSelectedModel(claudeModel);
       setSelectedCodexModel(codexModel);
+      setSelectedCodexReasoningEffort(codexReasoningEffort);
       setSelectedGeminiModel(geminiModel);
       setSelectedOpenCodeModel(openCodeModel);
       setIsLoading(false);
     },
     [selectedCommand],
   );
+
+  const refreshCodexModels = useCallback(async () => {
+    setIsLoadingCodexModels(true);
+    setCodexModelsError(undefined);
+    try {
+      setCodexModels(await getCodexModels());
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setCodexModelsError(message);
+      await showToast({
+        style: Toast.Style.Failure,
+        title: "Could Not Load Codex Models",
+        message,
+      });
+    } finally {
+      setIsLoadingCodexModels(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshCodexModels();
+  }, [refreshCodexModels]);
 
   useEffect(() => {
     (async () => {
@@ -218,14 +235,23 @@ export default function ManageModel() {
     });
   }
 
-  async function handleSelectCodex(model: CodexModel) {
-    await setCodexModelForCommand(selectedCommand, model);
-    await refresh();
-    await showToast({
-      style: Toast.Style.Success,
-      title: "Codex Model Updated",
-      message: `${COMMAND_TITLES[selectedCommand]} uses ${model}`,
-    });
+  async function handleSelectCodex(model: CodexModelInfo, effort: string) {
+    try {
+      await setCodexModelForCommand(selectedCommand, model.model);
+      await setCodexReasoningEffortForCommand(selectedCommand, effort);
+      await refresh();
+      await showToast({
+        style: Toast.Style.Success,
+        title: "Codex Model Updated",
+        message: `${COMMAND_TITLES[selectedCommand]} uses ${model.model} (${effort})`,
+      });
+    } catch (error) {
+      await showToast({
+        style: Toast.Style.Failure,
+        title: "Could Not Update Codex Model",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   async function handleSelectGemini(model: GeminiModel) {
@@ -266,7 +292,7 @@ export default function ManageModel() {
 
   return (
     <List
-      isLoading={isLoading}
+      isLoading={isLoading || isLoadingCodexModels}
       navigationTitle={`Manage Models: ${COMMAND_TITLES[selectedCommand]}`}
       searchBarAccessory={taskDropdown}
     >
@@ -299,30 +325,90 @@ export default function ManageModel() {
       <List.Section
         title={`Select Codex Model for ${COMMAND_TITLES[selectedCommand]}`}
       >
-        {CODEX_MODELS.map((model) => (
+        {codexModels.map((model) => (
           <List.Item
-            key={model.value}
+            key={model.id}
             icon={
-              selectedCodexModel === model.value
+              selectedCodexModel === model.model
                 ? Icon.CheckCircle
                 : Icon.Circle
             }
-            title={model.title}
+            title={`${model.displayName}${model.isDefault ? " (CLI Default)" : ""}`}
             subtitle={model.description}
             accessories={
-              selectedCodexModel === model.value ? [{ text: "Selected" }] : []
+              selectedCodexModel === model.model
+                ? [{ text: selectedCodexReasoningEffort }, { text: "Selected" }]
+                : []
             }
             actions={
               <ActionPanel>
                 <Action
                   title="Select Model"
                   icon={Icon.Check}
-                  onAction={() => handleSelectCodex(model.value)}
+                  onAction={() =>
+                    handleSelectCodex(model, model.defaultReasoningEffort)
+                  }
                 />
+                <ActionPanel.Submenu
+                  title="Select Reasoning Effort"
+                  icon={Icon.Gear}
+                >
+                  {model.supportedReasoningEfforts.map((effort) => (
+                    <Action
+                      key={effort.reasoningEffort}
+                      title={`${effort.reasoningEffort}${effort.reasoningEffort === model.defaultReasoningEffort ? " (Default)" : ""}`}
+                      icon={
+                        selectedCodexModel === model.model &&
+                        selectedCodexReasoningEffort === effort.reasoningEffort
+                          ? Icon.CheckCircle
+                          : Icon.Circle
+                      }
+                      onAction={() =>
+                        handleSelectCodex(model, effort.reasoningEffort)
+                      }
+                    />
+                  ))}
+                </ActionPanel.Submenu>
               </ActionPanel>
             }
           />
         ))}
+        {!isLoadingCodexModels &&
+          !codexModelsError &&
+          !codexModels.some((model) => model.model === selectedCodexModel) && (
+            <List.Item
+              icon={Icon.CheckCircle}
+              title={selectedCodexModel}
+              subtitle="Saved model is not listed by Codex CLI"
+              accessories={[
+                { text: selectedCodexReasoningEffort },
+                { text: "Selected" },
+              ]}
+            />
+          )}
+        {(codexModelsError ||
+          (!isLoadingCodexModels && codexModels.length === 0)) && (
+          <List.Item
+            icon={Icon.Warning}
+            title={
+              codexModelsError
+                ? "Could Not Load Codex Models"
+                : "No Codex Models Available"
+            }
+            subtitle={
+              codexModelsError ?? "Check your Codex CLI login and configuration"
+            }
+            actions={
+              <ActionPanel>
+                <Action
+                  title="Reload Codex Models"
+                  icon={Icon.ArrowClockwise}
+                  onAction={refreshCodexModels}
+                />
+              </ActionPanel>
+            }
+          />
+        )}
       </List.Section>
       <List.Section
         title={`Select Gemini Model for ${COMMAND_TITLES[selectedCommand]}`}
@@ -358,9 +444,7 @@ export default function ManageModel() {
         <List.Item
           icon={selectedOpenCodeModel ? Icon.CheckCircle : Icon.Circle}
           title="OpenCode Model"
-          subtitle={
-            selectedOpenCodeModel || "Enter a model in provider/model format"
-          }
+          subtitle={selectedOpenCodeModel || "OpenCode CLI default"}
           accessories={selectedOpenCodeModel ? [{ text: "Selected" }] : []}
           actions={
             <ActionPanel>
