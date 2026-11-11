@@ -1,4 +1,5 @@
 import { LocalStorage } from "@raycast/api";
+import { resolve } from "path";
 
 const CONFIGURED_FOLDERS_KEY = "configured-folders";
 const DIR_HISTORY_KEY = "dir-history";
@@ -14,6 +15,7 @@ const CODEX_REASONING_EFFORT_PREFIX = "selected-codex-reasoning-effort:";
 const AGENT_KEY = "selected-agent";
 const COMMAND_AGENT_PREFIX = "selected-agent:";
 const SKILL_PREFIX = "skill-";
+const REPO_SKILL_PREFIX = "repo-skill:";
 
 export type ClaudeModel = "haiku" | "sonnet" | "opus";
 export const DEFAULT_MODEL: ClaudeModel = "sonnet";
@@ -372,16 +374,31 @@ export async function setAgentForCommand(
 
 export async function getSkillPath(
   command: SkillCommand,
+  dirPath?: string,
 ): Promise<string | null> {
+  if (dirPath) {
+    const repoSkill = await LocalStorage.getItem<string>(
+      repoSkillKey(command, dirPath),
+    );
+    if (repoSkill) return repoSkill;
+  }
   const raw = await LocalStorage.getItem<string>(SKILL_PREFIX + command);
   return raw || null;
+}
+
+function repoSkillKey(command: SkillCommand, dirPath: string): string {
+  return `${REPO_SKILL_PREFIX}${command}:${resolve(dirPath)}`;
 }
 
 export async function setSkillPath(
   command: SkillCommand,
   path: string,
+  dirPath?: string,
 ): Promise<void> {
-  await LocalStorage.setItem(SKILL_PREFIX + command, path);
+  await LocalStorage.setItem(
+    dirPath ? repoSkillKey(command, dirPath) : SKILL_PREFIX + command,
+    path,
+  );
 }
 
 export async function removeSkillPath(command: SkillCommand): Promise<void> {

@@ -15,8 +15,7 @@ import {
 } from "./storage";
 import { launchTask } from "./task-manager";
 import { TaskDetail } from "./task-detail";
-import { RepoPicker } from "./repo-picker";
-import { SkillGate, type SkillConfig } from "./skill-picker";
+import { SkillRepoPicker, type SkillConfig } from "./skill-picker";
 
 function BranchPicker({
   dirPath,
@@ -154,30 +153,26 @@ function BranchPicker({
 }
 
 export default function CreatePR() {
-  return (
-    <SkillGate command="create-pr">
-      {(skill) => <CreatePRInner skill={skill} />}
-    </SkillGate>
-  );
-}
+  const [selection, setSelection] = useState<{
+    dirPath: string;
+    skill: SkillConfig;
+  } | null>(null);
 
-function CreatePRInner({ skill }: { skill: SkillConfig }) {
-  const [selectedDir, setSelectedDir] = useState<string | null>(null);
-
-  if (selectedDir) {
+  if (selection) {
     return (
       <BranchPicker
-        dirPath={selectedDir}
-        skill={skill}
-        onBack={() => setSelectedDir(null)}
+        dirPath={selection.dirPath}
+        skill={selection.skill}
+        onBack={() => setSelection(null)}
       />
     );
   }
 
   return (
-    <RepoPicker
+    <SkillRepoPicker
+      command="create-pr"
       primaryActionTitle="Select"
-      onSelect={(fullPath) => setSelectedDir(fullPath)}
+      onSelect={(dirPath, skill) => setSelection({ dirPath, skill })}
     />
   );
 }

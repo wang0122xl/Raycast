@@ -5,8 +5,8 @@ import {
   List,
   showToast,
   Toast,
+  useNavigation,
 } from "@raycast/api";
-import { useState, useEffect } from "react";
 import {
   getAgentForCommand,
   getSkillPath,
@@ -16,6 +16,7 @@ import {
 } from "./storage";
 import { skillPathToName } from "./task-manager";
 import { dirFromPath } from "./git-utils";
+import { RepoPicker } from "./repo-picker";
 
 const COMMAND_LABELS: Record<SkillCommand, string> = {
   "git-push": "Git Push",
@@ -67,38 +68,52 @@ export interface SkillConfig {
   agent: Agent;
 }
 
-interface SkillGateProps {
+interface SkillRepoPickerProps {
   command: SkillCommand;
-  children: (config: SkillConfig) => React.ReactNode;
+  primaryActionTitle: string;
+  onSelect: (dirPath: string, config: SkillConfig) => void | Promise<void>;
 }
 
-export function SkillGate({ command, children }: SkillGateProps) {
-  const [config, setConfig] = useState<SkillConfig | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+export function SkillRepoPicker({
+  command,
+  primaryActionTitle,
+  onSelect,
+}: SkillRepoPickerProps) {
+  const { push, pop } = useNavigation();
 
-  useEffect(() => {
-    (async () => {
+  async function handleSelect(dirPath: string) {
+    try {
       const [path, agent] = await Promise.all([
-        getSkillPath(command),
+        getSkillPath(command, dirPath),
         getAgentForCommand(command),
       ]);
       if (path) {
-        setConfig(skillPathToConfig(path, agent));
+        await onSelect(dirPath, skillPathToConfig(path, agent));
+        return;
       }
-      setIsLoading(false);
-    })();
-  }, [command]);
-
-  if (isLoading) {
-    return <List isLoading />;
-  }
-
-  if (config) {
-    return <>{children(config)}</>;
+      push(
+        <SkillPrompt
+          command={command}
+          onConfigured={async (config) => {
+            pop();
+            await onSelect(dirPath, config);
+          }}
+        />,
+      );
+    } catch (error) {
+      await showToast({
+        style: Toast.Style.Failure,
+        title: "Failed to load skill",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   return (
-    <SkillPrompt command={command} onConfigured={(cfg) => setConfig(cfg)} />
+    <RepoPicker
+      primaryActionTitle={primaryActionTitle}
+      onSelect={handleSelect}
+    />
   );
 }
 
@@ -113,7 +128,7 @@ function SkillPrompt({
   onConfigured,
 }: {
   command: SkillCommand;
-  onConfigured: (config: SkillConfig) => void;
+  onConfigured: (config: SkillConfig) => void | Promise<void>;
 }) {
   const label = COMMAND_LABELS[command];
 
@@ -130,12 +145,22 @@ function SkillPrompt({
       return;
     }
 
-    await setSkillPath(command, path);
-    await showToast({
-      style: Toast.Style.Success,
-      title: `Skill configured: /${name}`,
-    });
-    onConfigured(skillPathToConfig(path, await getAgentForCommand(command)));
+    try {
+      await setSkillPath(command, path);
+      await showToast({
+        style: Toast.Style.Success,
+        title: `Skill configured: /${name}`,
+      });
+      await onConfigured(
+        skillPathToConfig(path, await getAgentForCommand(command)),
+      );
+    } catch (error) {
+      await showToast({
+        style: Toast.Style.Failure,
+        title: "Failed to configure skill",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   return (

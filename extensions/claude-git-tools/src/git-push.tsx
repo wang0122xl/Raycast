@@ -1,21 +1,12 @@
 import { showToast, Toast, useNavigation } from "@raycast/api";
 import { launchTask } from "./task-manager";
 import { TaskDetail } from "./task-detail";
-import { RepoPicker } from "./repo-picker";
-import { SkillGate, type SkillConfig } from "./skill-picker";
+import { SkillRepoPicker, type SkillConfig } from "./skill-picker";
 
 export default function GitPush() {
-  return (
-    <SkillGate command="git-push">
-      {(skill) => <GitPushInner skill={skill} />}
-    </SkillGate>
-  );
-}
-
-function GitPushInner({ skill }: { skill: SkillConfig }) {
   const { push } = useNavigation();
 
-  async function handleSelect(fullPath: string) {
+  async function handleSelect(fullPath: string, skill: SkillConfig) {
     const toast = await showToast({
       style: Toast.Style.Animated,
       title: "Starting git push...",
@@ -43,5 +34,11 @@ function GitPushInner({ skill }: { skill: SkillConfig }) {
     }
   }
 
-  return <RepoPicker primaryActionTitle="Git Push" onSelect={handleSelect} />;
+  return (
+    <SkillRepoPicker
+      command="git-push"
+      primaryActionTitle="Git Push"
+      onSelect={handleSelect}
+    />
+  );
 }

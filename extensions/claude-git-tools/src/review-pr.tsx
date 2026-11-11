@@ -22,9 +22,8 @@ import {
   ReviewReportDetail,
   TaskDetail,
 } from "./task-detail";
-import { RepoPicker } from "./repo-picker";
 import { getTasks, type Task } from "./storage";
-import { SkillGate, type SkillConfig } from "./skill-picker";
+import { SkillRepoPicker, type SkillConfig } from "./skill-picker";
 import {
   execGhAsync,
   MERGE_METHOD_LABELS,
@@ -632,30 +631,26 @@ function PRPicker({
 }
 
 export default function ReviewPR() {
-  return (
-    <SkillGate command="review-pr">
-      {(skill) => <ReviewPRInner skill={skill} />}
-    </SkillGate>
-  );
-}
+  const [selection, setSelection] = useState<{
+    dirPath: string;
+    skill: SkillConfig;
+  } | null>(null);
 
-function ReviewPRInner({ skill }: { skill: SkillConfig }) {
-  const [selectedDir, setSelectedDir] = useState<string | null>(null);
-
-  if (selectedDir) {
+  if (selection) {
     return (
       <PRPicker
-        dirPath={selectedDir}
-        skill={skill}
-        onBack={() => setSelectedDir(null)}
+        dirPath={selection.dirPath}
+        skill={selection.skill}
+        onBack={() => setSelection(null)}
       />
     );
   }
 
   return (
-    <RepoPicker
+    <SkillRepoPicker
+      command="review-pr"
       primaryActionTitle="Select"
-      onSelect={(fullPath) => setSelectedDir(fullPath)}
+      onSelect={(dirPath, skill) => setSelection({ dirPath, skill })}
     />
   );
 }

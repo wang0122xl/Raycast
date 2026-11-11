@@ -5,6 +5,7 @@ import {
   List,
   showToast,
   Toast,
+  useNavigation,
 } from "@raycast/api";
 import { useState, useEffect, useCallback } from "react";
 import {
@@ -21,6 +22,7 @@ import {
 } from "./storage";
 import { pickSkillFile } from "./skill-picker";
 import { pickFolderDialog } from "./git-utils";
+import { RepoPicker } from "./repo-picker";
 
 const SKILL_COMMANDS: { command: SkillCommand; label: string }[] = [
   { command: "git-push", label: "Git Push" },
@@ -36,6 +38,7 @@ const AGENTS: { value: Agent; label: string }[] = [
 ];
 
 export default function ManageFolders() {
+  const { push, pop } = useNavigation();
   const [folders, setFolders] = useState<string[]>([]);
   const [skills, setSkills] = useState<Record<SkillCommand, string | null>>({
     "git-push": null,
@@ -85,6 +88,33 @@ export default function ManageFolders() {
         message: selected,
       });
     }
+  }
+
+  function handleCustomizeTarget(command: SkillCommand, label: string) {
+    push(
+      <RepoPicker
+        primaryActionTitle="Select Skill File"
+        onSelect={async (dirPath) => {
+          try {
+            const selected = await pickSkillFile(`${label} — ${dirPath}`);
+            if (!selected) return;
+            await setSkillPath(command, selected, dirPath);
+            pop();
+            await showToast({
+              style: Toast.Style.Success,
+              title: "Repository skill configured",
+              message: `${label}: ${dirPath}`,
+            });
+          } catch (error) {
+            await showToast({
+              style: Toast.Style.Failure,
+              title: "Failed to configure repository skill",
+              message: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }}
+      />,
+    );
   }
 
   return (
@@ -162,6 +192,12 @@ export default function ManageFolders() {
                         });
                       }
                     }}
+                  />
+                  <Action
+                    title="自定义目标"
+                    icon={Icon.Folder}
+                    shortcut={{ modifiers: ["cmd"], key: "e" }}
+                    onAction={() => handleCustomizeTarget(command, label)}
                   />
                   {path && (
                     <Action

@@ -32,7 +32,7 @@ npm run dev
 Run **Manage Folders & Skills** in Raycast:
 
 - **Folders**: Add parent directories containing git repos (e.g. `~/git`). The extension scans up to 3 levels deep for `.git`.
-- **Skills**: Optionally bind a `.md` skill file to each command (Git Push / Create PR / Review PR) as a system prompt. Without a skill file, the extension falls back to built-in slash commands (`/git-push-changes`, `/create-pr`, `/pr-review`).
+- **Skills**: Select a `.md` skill file as the root default for each command (Git Push / Create PR / Review PR). With a command selected in Skills, press **⌘E — 自定义目标 (Custom Target)**, select a Git repository, then select its skill file. Bindings are saved locally for each repository and command. Tasks (including review reruns) use the repository binding first and fall back to the root default when no binding exists. If neither is configured, the command prompts you to select a root skill after choosing a repository.
 
 ### 3. Run a Command
 

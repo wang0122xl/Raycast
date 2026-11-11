@@ -32,7 +32,7 @@ npm run dev
 在 Raycast 中运行 **Manage Folders & Skills**：
 
 - **Folders**：添加包含 git 仓库的父目录（如 `~/git`），扩展向下扫描最多 3 层寻找 `.git`
-- **Skills**：可选为每个命令（Git Push / Create PR / Review PR）绑定 `.md` skill 文件作为系统提示词。未配置时回退到内置 slash 命令（`/git-push-changes`、`/create-pr`、`/pr-review`）
+- **Skills**：为每个命令（Git Push / Create PR / Review PR）选择 `.md` skill 文件作为根级默认配置。在 Skills 中选中命令后按 **⌘E — 自定义目标**，先选择 Git 仓库，再选择 skill 文件。绑定按「仓库目录 + 命令」保存在本地；执行任务（包括重新 Review）时优先使用目录绑定，没有绑定则回退到根级配置。两者均未配置时，选择仓库后会提示选择根级 skill。
 
 ### 3. 执行命令
 

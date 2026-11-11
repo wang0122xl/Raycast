@@ -74,14 +74,17 @@ function skillFileToSlashCommandName(path: string): string {
     : baseName;
 }
 
-export async function getSkillOptionsForCommand(command: TaskCommand): Promise<{
+export async function getSkillOptionsForCommand(
+  command: TaskCommand,
+  dirPath?: string,
+): Promise<{
   skillPath?: string;
   skillName?: string;
   skillDir?: string;
   agent: Agent;
 }> {
   const [path, agent] = await Promise.all([
-    getSkillPath(command),
+    getSkillPath(command, dirPath),
     getAgentForCommand(command),
   ]);
   if (!path) return { agent };
@@ -1295,6 +1298,11 @@ export async function launchTask(
   label: string,
   options: TaskOptions = {},
 ): Promise<Task | null> {
+  const { skillPath, skillName, skillDir } = await getSkillOptionsForCommand(
+    command,
+    dir,
+  );
+  options = { ...options, skillPath, skillName, skillDir };
   ensureTaskDir();
   reapStaleTaskProcesses();
   const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
